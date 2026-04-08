@@ -1,0 +1,17 @@
+{
+  "name": "planner2026-node",
+  "version": "1.0.0",
+  "description": "Planner 2026 — Node.js/Express",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "ejs": "^3.1.9",
+    "express": "^4.18.3",
+    "express-session": "^1.18.0",
+    "sqlite3": "^6.0.1"
+  }
+}

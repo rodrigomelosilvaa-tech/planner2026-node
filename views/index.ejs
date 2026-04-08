@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Planner 2026</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,600;1,400&family=JetBrains+Mono:wght@300;400;500&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body>
+
+<aside class="sidebar" id="sidebar">
+  <div class="sb-brand">
+    <div class="sb-logo" onclick="toggleSidebar()">P</div>
+    <div class="sb-title">Planner<span>2026</span></div>
+  </div>
+  <nav class="sb-nav">
+    <div class="sb-link active" data-page="planner" onclick="goTo('planner')"><span class="sb-icon">📋</span><span class="sb-lbl">Planner Semanal</span></div>
+    <div class="sb-link" data-page="calendario" onclick="goTo('calendario')"><span class="sb-icon">📅</span><span class="sb-lbl">Calendário</span></div>
+    <div class="sb-link" data-page="kanban" onclick="goTo('kanban')"><span class="sb-icon">🗂️</span><span class="sb-lbl">Quadro Kanban</span></div>
+    <div class="sb-link" data-page="backlog" onclick="goTo('backlog')"><span class="sb-icon">📌</span><span class="sb-lbl">Backlog</span><span class="sb-badge" id="bdg-bl"></span></div>
+    <div class="sb-link" data-page="rotina" onclick="goTo('rotina')"><span class="sb-icon">🔄</span><span class="sb-lbl">Rotina</span></div>
+    <div class="sb-link" data-page="categorias" onclick="goTo('categorias')"><span class="sb-icon">🏷️</span><span class="sb-lbl">Categorias</span></div>
+    <div class="sb-link" data-page="imprevistos" onclick="goTo('imprevistos')"><span class="sb-icon">⚡</span><span class="sb-lbl">Imprevistos</span><span class="sb-badge red" id="bdg-imp"></span></div>
+    <div class="sb-link" data-page="revisao" onclick="goTo('revisao')"><span class="sb-icon">📊</span><span class="sb-lbl">Revisão Semanal</span></div>
+    <% if (currentUser.is_admin) { %>
+    <div class="sb-link" onclick="window.location.href='/admin'"><span class="sb-icon">👑</span><span class="sb-lbl">Admin Panel</span></div>
+    <% } %>
+    <div class="sb-link" onclick="window.location.href='/logout'"><span class="sb-icon">🚪</span><span class="sb-lbl">Sair (<%= currentUser.nome %>)</span></div>
+  </nav>
+  <div class="sb-footer">
+    <span class="sb-footer-txt">⚓ Permissão</span>
+    <div class="theme-btns">
+      <button class="theme-btn" id="tb-dark"  onclick="setTheme('dark')"   title="Dark">🌙</button>
+      <button class="theme-btn" id="tb-light" onclick="setTheme('light')"  title="Light">☀️</button>
+      <button class="theme-btn" id="tb-sys"   onclick="setTheme('system')" title="Sistema">💻</button>
+    </div>
+  </div>
+</aside>
+
+<div class="main-wrap">
+  <header class="topbar">
+    <button class="tb-menu" onclick="toggleSidebar()">☰</button>
+    <div class="tb-ctx" id="tb-ctx">Planner Semanal</div>
+    <div class="tb-wnav" id="tb-wnav">
+      <button class="nav-btn" onclick="prevWeek()">‹</button>
+      <div class="tb-wlbl" id="tb-wlbl">—</div>
+      <button class="nav-btn" onclick="nextWeek()">›</button>
+      <button class="nav-btn today" onclick="goToday()">Hoje</button>
+      <button class="btn-icon" onclick="toggleRightSidebar()" title="Recolher Painel Direito">📊</button>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn-p" onclick="openAddModal()">+ Adicionar</button>
+    </div>
+  </header>
+
+  <div class="pages">
+
+    <!-- PLANNER -->
+    <div class="page active" id="page-planner">
+      <div class="planner-layout">
+        <div class="planner-center">
+          <div id="grade-hdr" class="grade-hdr"></div>
+          <div id="grade-body" class="grade-body"></div>
+        </div>
+        <div class="planner-right" id="planner-right">
+          <div class="pr-tabs">
+            <button class="pr-tab active" onclick="switchPrTab('bl',this)"    title="Backlog">📌</button>
+            <button class="pr-tab"        onclick="switchPrTab('rot',this)"   title="Rotina">🔄</button>
+            <button class="pr-tab"        onclick="switchPrTab('imp',this)"   title="Imprevistos">⚡</button>
+            <button class="pr-tab"        onclick="switchPrTab('stats',this)" title="Progresso">📊</button>
+          </div>
+          <div class="pr-panel active" id="pr-bl">
+            <div class="pr-filter" id="pr-filter"></div>
+            <div class="pr-list" id="pr-bl-list"></div>
+          </div>
+          <div class="pr-panel" id="pr-rot">
+            <div class="pr-list" id="pr-rot-list"></div>
+          </div>
+          <div class="pr-panel" id="pr-imp">
+            <div class="pr-imp-form" id="pr-imp-form"></div>
+            <div class="pr-list" id="pr-imp-list"></div>
+          </div>
+          <div class="pr-panel" id="pr-stats">
+            <div class="pr-list" id="pr-stats-list" style="padding:12px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CALENDÁRIO -->
+    <div class="page" id="page-calendario">
+      <div class="cal-wrap">
+        <div class="cal-nav">
+          <button class="nav-btn" onclick="calPrev()">‹</button>
+          <div class="cal-lbl" id="cal-lbl">—</div>
+          <button class="nav-btn" onclick="calNext()">›</button>
+        </div>
+        <div class="cal-legend" id="cal-legend"></div>
+        <div class="cal-grid" id="cal-grid"></div>
+      </div>
+    </div>
+
+    <!-- BACKLOG -->
+    <div class="page" id="page-backlog">
+      <div class="page-inner">
+        <div class="page-search-bar">
+          <input class="search-input" id="bl-search" type="text" placeholder="🔍  Buscar no backlog..." oninput="renderBacklog()">
+          <select class="field-sel search-sel" id="bl-urg-filter" onchange="renderBacklog()">
+            <option value="">Urgência</option>
+            <option value="h">🔴 Urgente</option>
+            <option value="m">🟡 Esta semana</option>
+            <option value="l">🟢 Aguardar</option>
+          </select>
+          <select class="field-sel search-sel" id="bl-status-filter" onchange="renderBacklog()">
+            <option value="">Status</option>
+            <option value="aberto">Abertos</option>
+            <option value="concluido">Concluídos</option>
+          </select>
+        </div>
+        <div class="page-filters" id="bl-filters"></div>
+        <div class="tbl-wrap">
+          <table class="data-tbl">
+              <thead><tr>
+                <th style="width:32px"></th>
+                <th onclick="sortTable('backlog','id')" style="cursor:pointer">ID ▲▼</th>
+                <th onclick="sortTable('backlog','titulo')" style="cursor:pointer">Título ▲▼</th>
+                <th onclick="sortTable('backlog','categoria_id')" style="cursor:pointer">Categoria ▲▼</th>
+                <th onclick="sortTable('backlog','urgencia')" style="cursor:pointer">Urgência ▲▼</th>
+                <th onclick="sortTable('backlog','prazo')" style="cursor:pointer">Prazo ▲▼</th>
+                <th style="width:80px">Ações</th>
+              </tr></thead>
+            <tbody id="bl-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ROTINA -->
+    <div class="page" id="page-rotina">
+      <div class="page-inner">
+        <div class="page-search-bar">
+          <input class="search-input" id="rot-search" type="text" placeholder="🔍  Buscar rotinas..." oninput="renderRotinaPage()">
+          <select class="field-sel search-sel" id="rot-cat-filter" onchange="renderRotinaPage()">
+            <option value="">Categoria</option>
+          </select>
+          <select class="field-sel search-sel" id="rot-dia-filter" onchange="renderRotinaPage()">
+            <option value="">Dia</option>
+            <option value="0">Segunda</option><option value="1">Terça</option>
+            <option value="2">Quarta</option><option value="3">Quinta</option>
+            <option value="4">Sexta</option><option value="5">Sábado</option>
+            <option value="6">Domingo</option>
+          </select>
+          <select class="field-sel search-sel" id="rot-status-filter" onchange="renderRotinaPage()">
+            <option value="">Status</option>
+            <option value="ativo">Ativas</option>
+            <option value="pausado">Pausadas</option>
+          </select>
+        </div>
+        <div class="rotina-grid" id="rot-grid"></div>
+      </div>
+    </div>
+
+    <!-- CATEGORIAS -->
+    <div class="page" id="page-categorias">
+      <div class="page-inner">
+        <div class="cats-grid" id="cats-grid"></div>
+      </div>
+    </div>
+
+    <!-- KANBAN -->
+    <div class="page" id="page-kanban">
+      <div class="kanban-header">
+        <div class="kanban-controls">
+          <label class="check-box" style="font-size:11px; color:var(--text2); display:flex; align-items:center; gap:6px; cursor:pointer">
+            <input type="checkbox" id="kanban-group-cat" onchange="renderKanban()"> Agrupar por Categoria (Raias)
+          </label>
+        </div>
+      </div>
+      <div class="kanban-board-container">
+        <div class="kanban-board" id="kanban-board"></div>
+        <button class="kanban-add-col" onclick="addNewKanbanColumn()">+ Nova Coluna</button>
+      </div>
+    </div>
+
+    <!-- IMPREVISTOS -->
+    <div class="page" id="page-imprevistos">
+      <div class="page-inner" style="max-width:720px">
+        <div class="imp-add-block">
+          <label class="ml">Novo imprevisto</label>
+          <textarea class="field-ta" id="imp-ta" rows="2" placeholder="Descreva o imprevisto..."></textarea>
+          <div class="imp-row">
+            <select class="field-sel" id="imp-urg" style="flex:1">
+              <option value="h">🔴 Urgente</option>
+              <option value="m" selected>🟡 Esta semana</option>
+              <option value="l">🟢 Pode aguardar</option>
+            </select>
+            <button class="btn-p" onclick="addImpPg()">+ Adicionar</button>
+          </div>
+        </div>
+        <div class="page-search-bar" style="margin:10px 0 4px 0">
+          <input class="search-input" id="imp-search" type="text" placeholder="🔍  Buscar imprevistos..." oninput="renderImpPg()">
+          <select class="field-sel search-sel" id="imp-status-filter" onchange="renderImpPg()">
+            <option value="">Status</option>
+            <option value="aberto">Abertos</option>
+            <option value="resolvido">Resolvidos</option>
+          </select>
+        </div>
+        <div style="display:flex; gap:15px; font-family:var(--font-m); font-size:9px; color:var(--text3); border-bottom:1px solid var(--border); padding-bottom:5px; margin:10px 0; cursor:pointer">
+          <span onclick="sortTable('imprevistos','id')" style="width:50px">ID ▲▼</span>
+          <span onclick="sortTable('imprevistos','texto')" style="flex:1">Descrição ▲▼</span>
+          <span onclick="sortTable('imprevistos','data')" style="width:80px">Data ▲▼</span>
+          <span onclick="sortTable('imprevistos','urgencia')" style="width:60px">Urg ▲▼</span>
+        </div>
+        <div id="imp-list"></div>
+      </div>
+    </div>
+
+    <!-- REVISÃO -->
+    <div class="page" id="page-revisao">
+      <div class="page-inner" style="max-width:900px">
+        <div class="rev-header" id="rev-header">
+          <div style="font-family:var(--font-m);font-size:9px;color:var(--text3);letter-spacing:2px;text-transform:uppercase">Revisão Semanal</div>
+          <div style="font-size:22px;font-weight:600;margin-top:4px" id="rev-week-lbl">—</div>
+        </div>
+        <!-- Stats -->
+        <div class="rev-section">
+          <div class="rev-section-title">📊 Progresso da Semana</div>
+          <div id="rev-stats-grid"></div>
+        </div>
+        <!-- Reflexão -->
+        <div class="rev-section">
+          <div class="rev-section-title">📝 Reflexão</div>
+          <div id="rev-form"></div>
+          <button class="btn-p" style="width:100%;padding:11px;margin-top:8px" onclick="saveRevisao()">💾 Salvar Reflexão</button>
+          <div id="rev-saved-msg" style="font-family:var(--font-m);font-size:9px;color:var(--green);margin-top:6px;text-align:center"></div>
+        </div>
+        <!-- Planos de ação -->
+        <div class="rev-section">
+          <div class="rev-section-title" style="display:flex;align-items:center;justify-content:space-between">
+            <span>🎯 Planos de Ação</span>
+            <button class="btn-p" style="font-size:10px;padding:6px 14px" onclick="openNovoPlano()">+ Novo Plano</button>
+          </div>
+          <div id="rev-planos-list"></div>
+          <!-- Form inline novo plano -->
+          <div id="rev-plano-form" style="display:none;background:var(--bg3);border-radius:8px;padding:14px;margin-top:10px">
+            <div class="mrow">
+              <div class="mf" style="flex:2">
+                <label class="ml">Ação</label>
+                <input class="field-in" id="pf-titulo" placeholder="O que fazer?">
+              </div>
+              <div class="mf">
+                <label class="ml">Categoria</label>
+                <select class="field-sel" id="pf-cat"></select>
+              </div>
+            </div>
+            <div class="mrow">
+              <div class="mf">
+                <label class="ml">Prazo</label>
+                <input class="field-in" id="pf-prazo" type="date">
+              </div>
+              <div class="mf">
+                <label class="ml">Urgência</label>
+                <select class="field-sel" id="pf-urg">
+                  <option value="h">🔴 Urgente</option>
+                  <option value="m" selected>🟡 Esta semana</option>
+                  <option value="l">🟢 Aguardar</option>
+                </select>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:8px">
+              <button class="btn-p" style="flex:1" onclick="salvarPlano()">Salvar Plano</button>
+              <button class="btn-g" onclick="fecharNovoPlano()">Cancelar</button>
+              <button class="btn-d" style="font-size:10px" onclick="promoverParaBacklog()" title="Criar no backlog também">📌 Promover p/ Backlog</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- CARD MODAL UNIVERSAL -->
+<div class="overlay" id="card-overlay">
+  <div class="card-modal" id="card-modal">
+    <div class="cm-head">
+      <div class="cm-id" id="cm-id">—</div>
+      <div class="cm-title-wrap">
+        <textarea class="cm-title" id="cm-title" rows="1" placeholder="Título do card..." oninput="autoResize(this)"></textarea>
+        <button class="modal-close" onclick="closeCardModal()">✕</button>
+      </div>
+    </div>
+    <div class="cm-tabs">
+      <button class="cm-tab active" data-tab="detalhes"    onclick="switchCmTab('detalhes',this)">Detalhes</button>
+      <button class="cm-tab"        data-tab="descricao"   onclick="switchCmTab('descricao',this)">Descrição</button>
+      <button class="cm-tab"        data-tab="checklist"   onclick="switchCmTab('checklist',this)">Checklist</button>
+      <button class="cm-tab"        data-tab="comentarios" onclick="switchCmTab('comentarios',this)">Comentários</button>
+      <button class="cm-tab"        data-tab="vinculos"    onclick="switchCmTab('vinculos',this)">Vínculos</button>
+    </div>
+    <div class="cm-body">
+      <!-- Detalhes -->
+      <div class="cm-tab-pane active" id="cm-pane-detalhes">
+        <div class="mrow">
+          <div class="mf"><label class="ml">Categoria</label><select class="field-sel" id="cm-cat"></select></div>
+          <div class="mf"><label class="ml">Tipo</label>
+            <select class="field-sel" id="cm-tipo">
+              <option value="unica">📌 Execução única</option>
+              <option value="rotina">🔄 Rotina</option>
+            </select>
+          </div>
+        </div>
+        <div class="mrow">
+          <div class="mf"><label class="ml">Urgência</label>
+            <select class="field-sel" id="cm-urg">
+              <option value="h">🔴 Urgente</option>
+              <option value="m">🟡 Esta semana</option>
+              <option value="l">🟢 Pode aguardar</option>
+            </select>
+          </div>
+          <div class="mf"><label class="ml">Prazo</label><input class="field-in" id="cm-prazo" type="date"></div>
+        </div>
+        <!-- Visibilidade e Período -->
+        <div id="cm-periodo-visibilidade">
+          <div class="mrow">
+            <div class="mf"><label class="ml">Horário</label><input class="field-in" id="cm-horario" type="time"></div>
+            <div class="mf"><label class="ml">Data de Início</label><input class="field-in" id="cm-data-inicio" type="date"></div>
+            <div class="mf"><label class="ml">Data de Término <span style="opacity:.5">(opcional)</span></label><input class="field-in" id="cm-data-fim" type="date"></div>
+          </div>
+          <div class="mf" style="margin-top:8px"><label class="ml">Dias de Aparição no Planner (Recorrência)</label>
+            <div id="cm-dias-check" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px"></div>
+          </div>
+        </div>
+        <!-- Horário para não-rotina -->
+        <div id="cm-horario-row" style="display:none" class="mrow">
+          <div class="mf"><label class="ml">Horário</label><input class="field-in" id="cm-horario-simple" type="time"></div>
+        </div>
+      </div>
+      <!-- Descrição -->
+      <div class="cm-tab-pane" id="cm-pane-descricao">
+        <textarea class="field-ta" id="cm-desc" rows="8" placeholder="Adicione uma descrição detalhada..."></textarea>
+      </div>
+      <!-- Checklist -->
+      <div class="cm-tab-pane" id="cm-pane-checklist">
+        <div id="cm-checklist-items"></div>
+        <div class="cl-add">
+          <input class="field-in" id="cm-cl-input" placeholder="Novo item..." style="flex:1;font-size:12.5px">
+          <button class="btn-p" style="padding:6px 14px;font-size:9px" onclick="addChecklistItem()">+</button>
+        </div>
+      </div>
+      <!-- Comentários -->
+      <div class="cm-tab-pane" id="cm-pane-comentarios">
+        <div id="cm-comments"></div>
+        <div class="comment-add">
+          <input class="field-in" id="cm-comment-input" placeholder="Escreva um comentário..." style="flex:1;font-size:12.5px">
+          <button class="btn-p" style="padding:6px 14px;font-size:9px" onclick="addCardComment()">↵</button>
+        </div>
+      </div>
+      <!-- Vínculos -->
+      <div class="cm-tab-pane" id="cm-pane-vinculos">
+        <div id="cm-vinculos-list"></div>
+        <div style="margin-top:10px;position:relative">
+          <label class="ml">Vincular card</label>
+          <input class="field-in" id="cm-vinc-search" placeholder="Busque por ID ou título..." autocomplete="off"
+            oninput="searchCards(this.value)">
+          <div class="search-results" id="cm-search-results"></div>
+        </div>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+          <button class="btn-d" style="font-size:9px;padding:6px 12px" onclick="createImpFromCard()">⚡ Criar imprevisto vinculado</button>
+        </div>
+      </div>
+    </div>
+    <div class="cm-foot">
+      <button class="btn-p" onclick="saveCardModal()">💾 Salvar</button>
+      <button class="btn-g" onclick="closeCardModal()">Cancelar</button>
+      <div style="margin-left:auto;font-family:var(--font-m);font-size:9px;color:var(--text3)" id="cm-saved-msg"></div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL CATEGORIA -->
+<div class="overlay" id="cat-overlay">
+  <div class="card-modal" style="max-width:420px">
+    <div class="cm-head">
+      <div class="cm-title-wrap">
+        <div class="cm-title" style="font-size:18px" id="cat-modal-title">Categoria</div>
+        <button class="modal-close" onclick="closeCatModal()">✕</button>
+      </div>
+    </div>
+    <div class="cm-body">
+      <div class="mf"><label class="ml">Nome</label><input class="field-in" id="cat-nome" type="text" placeholder="Nome da categoria"></div>
+      <div class="mrow">
+        <div class="mf">
+          <label class="ml">Ícone</label>
+          <div style="display:flex;gap:6px;align-items:center;position:relative">
+            <input class="field-in" id="cat-icone" type="text" placeholder="Emoji" style="font-size:20px;width:60px;text-align:center">
+            <button class="btn-g" style="padding:6px 10px" id="emoji-toggle-btn" onclick="toggleEmojiPicker(event)">😀</button>
+            <div class="emoji-picker" id="emoji-picker"></div>
+          </div>
+        </div>
+        <div class="mf">
+          <label class="ml">Cor</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input id="cat-cor-picker" type="color" value="#3498db" style="height:36px;width:50px;border:1px solid var(--border);border-radius:3px;cursor:pointer;background:var(--bg3)">
+            <input class="field-in" id="cat-cor-txt" type="text" placeholder="#3498db" style="flex:1">
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="cm-foot">
+      <button class="btn-p" onclick="saveCatModal()">Salvar</button>
+      <button class="btn-g" onclick="closeCatModal()">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>
