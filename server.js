@@ -8,6 +8,9 @@ const crypto   = require('crypto');
 const sqlite3  = require('sqlite3').verbose();
 const path     = require('path');
 
+// Carrega variáveis de ambiente do arquivo .env
+require('dotenv').config();
+
 // ── PASSWORD HELPERS ──────────────────────────
 // Verifica hash no formato Werkzeug scrypt (Python) OU bcrypt (Node)
 function checkPassword(password, hash) {
@@ -36,7 +39,17 @@ function hashPassword(password) {
 }
 
 const app = express();
-const db  = new sqlite3.Database(path.join(__dirname, 'app.db'));
+const dbPath = path.isAbsolute(process.env.DB_PATH || 'app.db') 
+  ? process.env.DB_PATH 
+  : path.join(__dirname, process.env.DB_PATH || 'app.db');
+
+const db = new sqlite3.Database(dbPath, (err) => {
+  if (err) {
+    console.error('Erro ao abrir o banco de dados:', err.message);
+  } else {
+    console.log('Conectado ao banco de dados SQLite:', dbPath);
+  }
+});
 
 // ── SQLITE HELPERS (Promise wrappers) ─────────
 function dbRun(sql, params = []) {
@@ -70,10 +83,13 @@ app.use('/static', express.static(path.join(__dirname, 'static')));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(session({
-  secret: 'planner2026_secreta',
+  secret: process.env.SESSION_SECRET || 'planner2026_secreta_padrao',
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 7 * 24 * 60 * 60 * 1000 }
+  cookie: { 
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    secure: process.env.NODE_ENV === 'production' // Recomendado true em HTTPS
+  }
 }));
 
 // ── DB SCHEMA ─────────────────────────────────
@@ -844,5 +860,18 @@ app.delete('/api/kanban/colunas/:cid', requireLogin, async (req, res) => {
 // ── START ─────────────────────────────────────
 setupDb().then(() => {
   const PORT = process.env.PORT || 5000;
-  app.listen(PORT, () => console.log(`Planner 2026 rodando em http://localhost:${PORT}`));
-}).catch(err => { console.error('Falha ao iniciar:', err); process.exit(1); });
+  // Hostinger/Produção: Geralmente o bind deve ser em 0.0.0.0 ou apenas omitir para ouvir em todas as interfaces
+  const HOST = process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost';
+  
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`--------------------------------------------------`);
+    console.log(`Planner 2026 iniciado com sucesso!`);
+    console.log(`Ambiente: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`Porta: ${PORT}`);
+    console.log(`URL Local: http://localhost:${PORT}`);
+    console.log(`--------------------------------------------------`);
+  });
+}).catch(err => { 
+  console.error('CRITICAL: Falha ao iniciar banco de dados:', err); 
+  process.exit(1); 
+});
