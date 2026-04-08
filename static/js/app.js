@@ -155,6 +155,16 @@ function itemAtivoNoSlot(it, dayIndex, weekMonday) {
   return false;
 }
 
+function findSlot(horario){
+  if(!horario) return null;
+  var best = null;
+  for(var i=0; i<TIMES.length; i++){
+    if(TIMES[i] <= horario) best = TIMES[i];
+    else break;
+  }
+  return best;
+}
+
 // ── NAV ───────────────────────────────────────
 function goTo(page) {
   S.page = page;
@@ -171,10 +181,6 @@ function goTo(page) {
   var wnav = document.getElementById('tb-wnav');
   if (wnav) wnav.style.display = page==='planner'?'flex':'none';
   renderPage(page);
-  if(window.innerWidth <= 768) {
-    var sb = document.getElementById('sidebar');
-    if(!sb.classList.contains('collapsed')) toggleSidebar();
-  }
 }
 function renderPage(p) {
   var map = {
@@ -184,15 +190,7 @@ function renderPage(p) {
   };
   if (map[p]) map[p]();
 }
-function toggleSidebar(){
-  var sb = document.getElementById('sidebar');
-  sb.classList.toggle('collapsed');
-  document.body.classList.toggle('sidebar-open', !sb.classList.contains('collapsed'));
-}
-function toggleRightSidebar(){
-  var pr = document.getElementById('planner-right');
-  if(pr) pr.classList.toggle('collapsed');
-}
+function toggleSidebar(){document.getElementById('sidebar').classList.toggle('collapsed');}
 function openAddModal() {
   var map = {
     planner:function(){openCardModal(null,'semana',null,null);},
@@ -242,7 +240,7 @@ function buildGrade() {
       // Rotina e Backlog Recorrente
       var recItems = S.rotina.concat(S.backlog.filter(function(b){ return !b.concluido; }));
       recItems.filter(function(it){
-        return it.horario===time && itemAtivoNoSlot(it, d, S.weekKey);
+        return findSlot(it.horario)===time && itemAtivoNoSlot(it, d, S.weekKey);
       }).forEach(function(it){
         var rdKey = it.id+'_'+d;
         var state = S.rotinaDone[rdKey];
@@ -273,9 +271,9 @@ function buildGrade() {
       var allSemanaItems = [];
       Object.keys(S.semana).forEach(function(k){
         (S.semana[k]||[]).forEach(function(it){
-          // Adiciona se a chave bate OU se o horário bate e está no período
-          if(k===key || (it.horario===time && itemAtivoNoSlot(it, d, S.weekKey))){
-            // Evitar duplicados se por acaso bater em ambos
+          // Se o item bater com esse slot de tempo e estiver ativo no dia
+          if(findSlot(it.horario)===time && itemAtivoNoSlot(it, d, S.weekKey)){
+            // Evitar duplicados
             if(!allSemanaItems.find(function(x){return x.id===it.id;})){
               allSemanaItems.push(it);
             }
