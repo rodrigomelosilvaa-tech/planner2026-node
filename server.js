@@ -47,7 +47,10 @@ const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
     console.error('Erro ao abrir o banco de dados:', err.message);
   } else {
-    console.log('Conectado ao banco de dados SQLite:', dbPath);
+    console.log('--------------------------------------------------');
+    console.log('BANCO DE DADOS CONECTADO');
+    console.log('Caminho absoluto:', path.resolve(dbPath));
+    console.log('--------------------------------------------------');
   }
 });
 
@@ -317,6 +320,20 @@ async function setupDb() {
     await seedCategories(info.lastID);
   }
 }
+
+// ── ROTA DE EMERGÊNCIA (SETUP) ────────────────
+app.get('/setup-admin', async (req, res) => {
+  try {
+    const hash = hashPassword('admin123');
+    await dbRun('INSERT OR IGNORE INTO user (nome, email, password_hash, is_admin) VALUES (?, ?, ?, ?)', 
+      ['Admin Exec', 'admin@planner.com', hash, 1]);
+    const u = await dbGet('SELECT id FROM user WHERE email = ?', ['admin@planner.com']);
+    if (u) await seedCategories(u.id);
+    res.send('<h1>Setup concluído!</h1><p>Tente logar agora com admin@planner.com / admin123</p><a href="/login">Ir para Login</a>');
+  } catch (err) {
+    res.status(500).send('Erro no setup: ' + err.message);
+  }
+});
 
 // ── AUTH ROUTES ───────────────────────────────
 app.get('/login', (req, res) => {
