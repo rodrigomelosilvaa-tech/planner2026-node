@@ -99,7 +99,7 @@ body{font-family:var(--font-b);background:var(--bg);color:var(--text);display:fl
 
 /* ── PLANNER LAYOUT ──────────────────────── */
 .planner-layout{display:grid;grid-template-columns:1fr 270px;height:100%;overflow:hidden}
-.planner-center{overflow:auto;padding:12px}
+.planner-center{overflow:auto;padding:0}
 .planner-right{background:var(--bg2);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;transition:width .25s, background .2s; width: 270px; }
 .planner-right.collapsed { width: 0; border-left: none; }
 
@@ -117,17 +117,17 @@ body{font-family:var(--font-b);background:var(--bg);color:var(--text);display:fl
 }
 
 /* ── GRADE ───────────────────────────────── */
-.grade-hdr{display:grid;grid-template-columns:58px repeat(7,1fr);gap:2px;margin-bottom:2px;
+.grade-hdr{display:grid;grid-template-columns:60px repeat(7,minmax(0,1fr));gap:2px;padding:12px 12px 0;
   position:sticky;top:0;z-index:10;background:var(--bg)}
-.gh-empty{background:var(--bg)}
+.gh-empty{width:60px;background:var(--bg)}
 .gh-day{background:var(--bg2);border:1px solid var(--border);border-radius:2px;padding:7px 4px;text-align:center;transition:background .2s}
 .gh-day.is-today{border-color:rgba(201,168,76,.5);background:rgba(201,168,76,.07)}
 .gh-name{font-family:var(--font-m);font-size:8px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text2)}
 .gh-day.is-today .gh-name{color:var(--gold)}
 .gh-date{font-family:var(--font-m);font-size:10px;color:var(--text3);margin-top:2px}
-.grade-body{display:grid;grid-template-columns:58px repeat(7,1fr);gap:2px}
-.g-time{font-family:var(--font-m);font-size:8px;color:var(--text3);text-align:right;padding:5px 6px 0;line-height:1.2}
-.g-cell{background:var(--bg3);border:1px solid var(--border);border-radius:2px;min-height:52px;
+.grade-body{display:grid;grid-template-columns:60px repeat(7,minmax(0,1fr));gap:2px;padding:2px 12px 12px}
+.g-time{width:60px;font-family:var(--font-m);font-size:8px;color:var(--text3);text-align:right;padding:5px 6px 0;line-height:1.2}
+.g-cell{background:var(--bg3);border:1px solid var(--border);border-radius:2px;min-height:70px;
   padding:3px;transition:border-color .15s,background .2s}
 .g-cell.is-today{border-color:rgba(201,168,76,.18)}
 .g-cell.drag-over{border-color:var(--gold)!important;background:rgba(201,168,76,.08)}

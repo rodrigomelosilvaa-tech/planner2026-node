@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="/static/css/main.css">
 </head>
 <body>
+<div class="sidebar-overlay" onclick="toggleSidebar()"></div>
 
 <aside class="sidebar" id="sidebar">
   <div class="sb-brand">
@@ -320,22 +321,16 @@
           </div>
           <div class="mf"><label class="ml">Prazo</label><input class="field-in" id="cm-prazo" type="date"></div>
         </div>
-        <!-- Visibilidade e Período -->
-        <div id="cm-periodo-visibilidade">
-          <div class="mrow">
-            <div class="mf"><label class="ml">Horário</label><input class="field-in" id="cm-horario" type="time"></div>
-            <div class="mf"><label class="ml">Data de Início</label><input class="field-in" id="cm-data-inicio" type="date"></div>
-            <div class="mf"><label class="ml">Data de Término <span style="opacity:.5">(opcional)</span></label><input class="field-in" id="cm-data-fim" type="date"></div>
-          </div>
-          <div class="mf" style="margin-top:8px"><label class="ml">Dias de Aparição no Planner (Recorrência)</label>
-            <div id="cm-dias-check" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px"></div>
-          </div>
+        <!-- Visibilidade e Período (Sempre visível conforme desejo do usuário) -->
+        <div class="mrow">
+          <div class="mf"><label class="ml">Horário</label><input class="field-in" id="cm-horario" type="time"></div>
+          <div class="mf"><label class="ml">Data de Início</label><input class="field-in" id="cm-data-inicio" type="date"></div>
+          <div class="mf"><label class="ml">Data de Término <span style="opacity:.5">(opcional)</span></label><input class="field-in" id="cm-data-fim" type="date"></div>
         </div>
-        <!-- Horário para não-rotina -->
-        <div id="cm-horario-row" style="display:none" class="mrow">
-          <div class="mf"><label class="ml">Horário</label><input class="field-in" id="cm-horario-simple" type="time"></div>
+        <div class="mf" id="cm-dias-check-row" style="margin-top:8px"><label class="ml">Dias de Aparição no Planner (Recorrência)</label>
+          <div id="cm-dias-check" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px"></div>
         </div>
-      </div>
+        </div>
       <!-- Descrição -->
       <div class="cm-tab-pane" id="cm-pane-descricao">
         <textarea class="field-ta" id="cm-desc" rows="8" placeholder="Adicione uma descrição detalhada..."></textarea>

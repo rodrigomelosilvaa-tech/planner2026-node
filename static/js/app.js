@@ -128,14 +128,31 @@ function rotinaAtivaNaData(r, dataISO) {
 
 function itemAtivoNoSlot(it, dayIndex, weekMonday) {
   if (it.ativo === false || it.concluido === true || it.resolvido === true) return false;
-  if (!it.dias || it.dias.length === 0 || it.dias.indexOf(dayIndex) < 0) return false;
+  
   var mon = new Date(weekMonday + 'T12:00:00');
   var slotDate = new Date(mon);
   slotDate.setDate(mon.getDate() + dayIndex);
   var slotISO = slotDate.toISOString().slice(0,10);
+
+  // Se tiver período definido
   if (it.data_inicio && it.data_inicio.length >= 10 && slotISO < it.data_inicio) return false;
   if (it.data_fim && it.data_fim.length >= 10 && slotISO > it.data_fim) return false;
-  return true;
+
+  // Se tiver recorrência (dias específicos)
+  if (it.dias && it.dias.length > 0) {
+    return it.dias.indexOf(dayIndex) >= 0;
+  }
+  
+  // Se for Execução Única (sem dias) mas o slot bate com o prazo ou está no período
+  // Se não tem 'dias', ele é considerado ativo em todos os dias do seu período [data_inicio, data_fim]
+  // ou no dia do seu 'prazo'/'data'.
+  if (!it.dias || it.dias.length === 0) {
+    if (it.data_inicio && it.data_fim) return true; // Já validamos o range acima
+    var pz = it.prazo || it.data;
+    if (pz && pz === slotISO) return true;
+  }
+
+  return false;
 }
 
 // ── NAV ───────────────────────────────────────
@@ -154,6 +171,10 @@ function goTo(page) {
   var wnav = document.getElementById('tb-wnav');
   if (wnav) wnav.style.display = page==='planner'?'flex':'none';
   renderPage(page);
+  if(window.innerWidth <= 768) {
+    var sb = document.getElementById('sidebar');
+    if(!sb.classList.contains('collapsed')) toggleSidebar();
+  }
 }
 function renderPage(p) {
   var map = {
@@ -163,7 +184,15 @@ function renderPage(p) {
   };
   if (map[p]) map[p]();
 }
-function toggleSidebar(){document.getElementById('sidebar').classList.toggle('collapsed');}
+function toggleSidebar(){
+  var sb = document.getElementById('sidebar');
+  sb.classList.toggle('collapsed');
+  document.body.classList.toggle('sidebar-open', !sb.classList.contains('collapsed'));
+}
+function toggleRightSidebar(){
+  var pr = document.getElementById('planner-right');
+  if(pr) pr.classList.toggle('collapsed');
+}
 function openAddModal() {
   var map = {
     planner:function(){openCardModal(null,'semana',null,null);},
@@ -239,8 +268,21 @@ function buildGrade() {
         }), key));
       });
 
-      // Itens customizados (posicionados manualmente)
-      (S.semana[key]||[]).forEach(function(item){ cell.appendChild(makeBlk(item,key)); });
+      // Itens customizados (S.semana)
+      // Procuramos itens que pertencem a esta célula OU itens multi-dia que batem com este horário
+      var allSemanaItems = [];
+      Object.keys(S.semana).forEach(function(k){
+        (S.semana[k]||[]).forEach(function(it){
+          // Adiciona se a chave bate OU se o horário bate e está no período
+          if(k===key || (it.horario===time && itemAtivoNoSlot(it, d, S.weekKey))){
+            // Evitar duplicados se por acaso bater em ambos
+            if(!allSemanaItems.find(function(x){return x.id===it.id;})){
+              allSemanaItems.push(it);
+            }
+          }
+        });
+      });
+      allSemanaItems.forEach(function(item){ cell.appendChild(makeBlk(item,key)); });
 
       var ad=document.createElement('div'); ad.className='g-cell-add';
       var ab=document.createElement('button'); ab.className='g-cell-add-btn'; ab.textContent='+ adicionar';
@@ -267,26 +309,43 @@ function makeBlk(item, cellKey) {
   var clBadge=cl.length?('<span class="blk-icons"> ☑ '+clDone+'/'+cl.length+'</span>'):'';
   var commBadge=(item.comentarios&&item.comentarios.length)?('<span class="blk-icons"> 💬'+item.comentarios.length+'</span>'):'';
   var vincBadge=(item.vinculos&&item.vinculos.length)?('<span class="blk-icons"> 🔗'+item.vinculos.length+'</span>'):'';
-  var rotinaTag=item._isRotina?'<span class="blk-tag" style="opacity:.6">🔄</span>':'';
+  var typeTag = '';
+  if (item.tipo === 'rotina' || item._isRotina) {
+    typeTag = '<span class="blk-tag" style="background:rgba(52,152,219,.2);color:#3498db" title="Rotina Replicada">🔄 Rotina</span>';
+  } else {
+    typeTag = '<span class="blk-tag" style="background:rgba(155,89,182,.15);color:#9b59b6" title="Execução Única">📌 Única</span>';
+  }
   
-  var deadlineTag='';
+  var deadlineTag='', alertStyle='';
   var pz = item.prazo || item.data;
-  if(pz){
-    var today = new Date().toISOString().slice(0,10);
-    var isCritical = pz <= today && !item.done;
-    deadlineTag = '<span class="blk-tag" style="color:'+(isCritical?'#ff4d4d':'var(--gold)')+'; font-weight:bold" title="Prazo: '+pz+'">⌛</span>';
+  if(pz && !item.done){
+    var today = new Date(); today.setHours(0,0,0,0);
+    var target = new Date(pz + 'T12:00:00'); target.setHours(0,0,0,0);
+    var diff = (target - today) / (1000*60*60*24);
+    
+    if(diff <= 1){ // Hoje, amanhã ou atrasado
+      var isVencido = diff < 0;
+      deadlineTag = '<span class="blk-tag" style="color:#ff4d4d; font-weight:bold" title="item critico e risco: '+pz+'">❓</span>';
+      alertStyle = 'background: rgba(255, 77, 77, 0.15) !important; border-left: 3px solid #ff4d4d !important;';
+    } else if(diff <= 3){
+      deadlineTag = '<span class="blk-tag" style="color:var(--amber); font-weight:bold" title="Prazo próximo: '+pz+'">⌛</span>';
+    } else {
+      deadlineTag = '<span class="blk-tag" style="color:var(--gold); opacity:.7" title="Prazo: '+pz+'">⌛</span>';
+    }
   }
 
   div.innerHTML='<div class="blk-t">'+(item.titulo||item.texto)+'</div>'
     +'<div class="blk-meta">'
     +'<span class="blk-id">'+(item._isRotina?item._rId:item.id)+'</span>'
     +'<span class="blk-tag">'+catIcon(item.categoria_id)+'</span>'
-    +rotinaTag+deadlineTag+clBadge+commBadge+vincBadge
+    +typeTag+deadlineTag+clBadge+commBadge+vincBadge
     +'</div>'
     +'<div class="blk-acts">'
     +'<button class="blk-act a-done" title="Concluir">✓</button>'
     +'<button class="blk-act a-del" title="Remover">✕</button>'
     +'</div>';
+  
+  if(alertStyle) div.style.cssText += alertStyle;
 
   div.onclick=function(e){
     if(e.target.classList.contains('blk-act')) return;
@@ -318,6 +377,7 @@ function makeBlk(item, cellKey) {
     if(item._isRotina){
       S.rotinaDone[item._rId+'_'+item._day]='removed';
       await api('POST','/api/rotina_done/'+S.weekKey,S.rotinaDone);
+      buildGrade();
     } else {
       await api('DELETE','/api/semanas/'+S.weekKey+'/item/'+item.id);
       if(S.semana[cellKey]) S.semana[cellKey]=S.semana[cellKey].filter(function(i){return i.id!==item.id;});
@@ -345,7 +405,7 @@ async function dropItem(drag,toKey,toTime){
       horario:toTime,done:false,descricao:rReal.descricao||'',
       comentarios:[],checklist:[],vinculos:[]};
     var cr=await api('POST','/api/semanas/'+S.weekKey+'/item',{cell_key:toKey,item:copy});
-    if(cr){S.semana[toKey]=S.semana[toKey]||[];S.semana[toKey].push(cr);}
+    if(cr){S.semana[toKey]=S.semana[toKey]||[];S.semana[toKey].push(cr);buildGrade();}
   } else {
     var moved=await api('POST','/api/semanas/'+S.weekKey+'/move',{from_key:fromKey,to_key:toKey,item_id:item.id});
     if(moved&&moved.ok){
@@ -593,7 +653,6 @@ function openCardModal(item, source, cellKey, defaultTime, dayIndex) {
     }
     document.getElementById('cm-prazo').value = defaultDate;
     document.getElementById('cm-horario').value = defaultTime||'';
-    document.getElementById('cm-horario-simple').value = defaultTime||'';
     document.getElementById('cm-data-inicio').value = todayISO;
     document.getElementById('cm-data-fim').value = '';
     document.getElementById('cm-desc').value = '';
@@ -614,7 +673,6 @@ function openCardModal(item, source, cellKey, defaultTime, dayIndex) {
     document.getElementById('cm-urg').value = editItem.urgencia||'m';
     document.getElementById('cm-prazo').value = editItem.prazo||editItem.data||editItem.data_inicio||todayISO;
     document.getElementById('cm-horario').value = editItem.horario||'';
-    document.getElementById('cm-horario-simple').value = editItem.horario||'';
     document.getElementById('cm-data-inicio').value = editItem.data_inicio||todayISO;
     document.getElementById('cm-data-fim').value = editItem.data_fim||'';
     document.getElementById('cm-desc').value = editItem.descricao||'';
@@ -622,9 +680,9 @@ function openCardModal(item, source, cellKey, defaultTime, dayIndex) {
     renderCmComments(editItem.comentarios||[]);
     renderCmVinculos(editItem.vinculos||[]);
     var isRotina = source==='rotina' || editItem.tipo==='rotina' || editItem._isRotina;
-    if(isRotina&&editItem.dias){
+    if(editItem.dias && Array.isArray(editItem.dias)){
       document.querySelectorAll('.cm-dia-ck').forEach(function(ck){
-        ck.checked=editItem.dias.indexOf(parseInt(ck.value))>=0;
+        ck.checked = editItem.dias.indexOf(parseInt(ck.value)) >= 0;
       });
     }
     item = editItem;
@@ -646,10 +704,8 @@ function openCardModal(item, source, cellKey, defaultTime, dayIndex) {
 }
 
 function toggleRotinaDiasUI(isRotina){
-  var el = document.getElementById('cm-periodo-visibilidade');
-  if(el) el.style.display = 'block'; // Fica sempre visível conforme regra de data inicio/fim universal
-  var h = document.getElementById('cm-horario-row');
-  if(h) h.style.display = isRotina ? 'none' : 'flex';
+  var el = document.getElementById('cm-dias-check-row');
+  if(el) el.style.display = isRotina ? 'block' : 'none';
 }
 
 function closeCardModal(){
@@ -674,7 +730,7 @@ async function saveCardModal(){
   var urg=document.getElementById('cm-urg').value;
   var prazo=document.getElementById('cm-prazo').value||null;
   var isRotina=tipo==='rotina';
-  var horario=isRotina ? (document.getElementById('cm-horario').value||null) : (document.getElementById('cm-horario-simple').value||null);
+  var horario=document.getElementById('cm-horario').value||null;
   var desc=document.getElementById('cm-desc').value;
   var checklist=gatherChecklist();
   var dias=Array.from(document.querySelectorAll('.cm-dia-ck:checked')).map(function(c){return parseInt(c.value);});
@@ -691,10 +747,15 @@ async function saveCardModal(){
       var created=await api('POST','/api/backlog',payload);
       if(created){S.backlog.push(created);renderBacklog();buildBLMini();}
     } else if(source==='semana'){
-      var cellKey=ctx.cellKey;
-      if(!cellKey){var t=horario?horario.replace(':',''):'0900';cellKey='0_'+t;}
-      var cr=await api('POST','/api/semanas/'+S.weekKey+'/item',{cell_key:cellKey,item:payload});
-      if(cr){S.semana[cellKey]=S.semana[cellKey]||[];S.semana[cellKey].push(cr);buildGrade();}
+      if(tipo==='rotina'){
+        var crR=await api('POST','/api/rotina',Object.assign(payload,{ativo:true}));
+        if(crR){S.rotina.push(crR); buildGrade();}
+      } else {
+        var cellKey=ctx.cellKey;
+        if(!cellKey){var t=horario?horario.replace(':',''):'0900';cellKey='0_'+t;}
+        var cr=await api('POST','/api/semanas/'+S.weekKey+'/item',{cell_key:cellKey,item:payload});
+        if(cr){S.semana[cellKey]=S.semana[cellKey]||[];S.semana[cellKey].push(cr);buildGrade();}
+      }
     } else if(source==='rotina'){
       var cr2=await api('POST','/api/rotina',Object.assign(payload,{ativo:true}));
       if(cr2){S.rotina.push(cr2);if(S.page==='rotina')renderRotinaPage();buildGrade();}
@@ -709,9 +770,17 @@ async function saveCardModal(){
       await api('PUT','/api/backlog/'+item.id,payload);
       renderBacklog();
     } else if(source==='semana'){
-      await api('PUT','/api/semanas/'+S.weekKey+'/item/'+item.id,payload);
-      var freshSemana=await api('GET','/api/semanas/'+S.weekKey);
-      if(freshSemana) S.semana=freshSemana;
+      if(tipo==='rotina'){
+        // Migrar de item de semana para rotina global
+        await api('DELETE','/api/semanas/'+S.weekKey+'/item/'+item.id);
+        var crRM=await api('POST','/api/rotina',Object.assign(payload,{ativo:true}));
+        if(crRM){S.rotina.push(crRM); loadSemana().then(buildGrade);}
+      } else {
+        await api('PUT','/api/semanas/'+S.weekKey+'/item/'+item.id,payload);
+        var freshSemana=await api('GET','/api/semanas/'+S.weekKey);
+        if(freshSemana) S.semana=freshSemana;
+        buildGrade();
+      }
     } else if(source==='rotina'){
       payload.ativo=item.ativo!==undefined?item.ativo:true;
       await api('PUT','/api/rotina/'+item.id,payload);
