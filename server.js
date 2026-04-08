@@ -4,8 +4,36 @@
 const express  = require('express');
 const session  = require('express-session');
 const bcrypt   = require('bcryptjs');
+const crypto   = require('crypto');
 const sqlite3  = require('sqlite3').verbose();
 const path     = require('path');
+
+// ── PASSWORD HELPERS ──────────────────────────
+// Verifica hash no formato Werkzeug scrypt (Python) OU bcrypt (Node)
+function checkPassword(password, hash) {
+  if (hash.startsWith('scrypt:')) {
+    // Formato Werkzeug: scrypt:N:r:p$salt$hexhash
+    const parts = hash.split('$');
+    if (parts.length !== 3) return false;
+    const [method, salt, expected] = parts;
+    const [, N, r, p] = method.split(':').map(Number);
+    const dklen = expected.length / 2; // hex → bytes
+    const maxmem  = 128 * N * r * 2;
+    const derived = crypto.scryptSync(password, salt, dklen, { N, r, p, maxmem });
+    return derived.toString('hex') === expected;
+  }
+  // Bcrypt (criado pelo Node)
+  return bcrypt.compareSync(password, hash);
+}
+
+// Gera hash no formato Werkzeug scrypt (compatível com Python)
+function hashPassword(password) {
+  const saltBytes  = crypto.randomBytes(12);
+  const salt       = saltBytes.toString('base64').slice(0, 16);
+  const maxmem     = 128 * 32768 * 8 * 2;
+  const derived    = crypto.scryptSync(password, salt, 64, { N: 32768, r: 8, p: 1, maxmem });
+  return `scrypt:32768:8:1$${salt}$${derived.toString('hex')}`;
+}
 
 const app = express();
 const db  = new sqlite3.Database(path.join(__dirname, 'app.db'));
@@ -220,7 +248,7 @@ function requireAdmin(req, res, next) {
 async function getSemanaObj(userId, wk) {
   let s = await dbGet('SELECT * FROM semana WHERE user_id = ? AND week_key = ?', [userId, wk]);
   if (!s) {
-    await dbRun("INSERT INTO semana (user_id, week_key, items, rotina_done) VALUES (?, ?, '{}', '{}')", [userId, wk]);
+    await dbRun("INSERT OR IGNORE INTO semana (user_id, week_key, items, rotina_done) VALUES (?, ?, '{}', '{}')", [userId, wk]);
     s = await dbGet('SELECT * FROM semana WHERE user_id = ? AND week_key = ?', [userId, wk]);
   }
   return s;
@@ -229,7 +257,7 @@ async function getSemanaObj(userId, wk) {
 async function getRevisaoObj(userId, wk) {
   let r = await dbGet('SELECT * FROM revisao WHERE user_id = ? AND week_key = ?', [userId, wk]);
   if (!r) {
-    await dbRun("INSERT INTO revisao (user_id, week_key, dados, planos_action) VALUES (?, ?, '{}', '[]')", [userId, wk]);
+    await dbRun("INSERT OR IGNORE INTO revisao (user_id, week_key, dados, planos_action) VALUES (?, ?, '{}', '[]')", [userId, wk]);
     r = await dbGet('SELECT * FROM revisao WHERE user_id = ? AND week_key = ?', [userId, wk]);
   }
   return r;
@@ -268,7 +296,7 @@ async function setupDb() {
   await createSchema();
   const user = await dbGet('SELECT * FROM user');
   if (!user) {
-    const hash = bcrypt.hashSync('admin123', 10);
+    const hash = hashPassword('admin123');
     const info = await dbRun('INSERT INTO user (nome, email, password_hash, is_admin) VALUES (?, ?, ?, ?)', ['Admin Exec', 'admin@planner.com', hash, 1]);
     await seedCategories(info.lastID);
   }
@@ -283,7 +311,7 @@ app.get('/login', (req, res) => {
 app.post('/login', async (req, res) => {
   const { email, password } = req.body;
   const user = await dbGet('SELECT * FROM user WHERE email = ?', [email]);
-  if (user && bcrypt.compareSync(password, user.password_hash)) {
+  if (user && checkPassword(password, user.password_hash)) {
     req.session.userId = user.id;
     return res.redirect('/');
   }
@@ -313,14 +341,14 @@ app.post('/api/admin/users', requireLogin, requireAdmin, async (req, res) => {
   const { nome, email, password, is_admin } = req.body;
   const exists = await dbGet('SELECT id FROM user WHERE email = ?', [email]);
   if (exists) return res.status(400).json({ error: 'E-mail já existe' });
-  const hash = bcrypt.hashSync(password, 10);
+  const hash = hashPassword(password);
   const info = await dbRun('INSERT INTO user (nome, email, password_hash, is_admin) VALUES (?, ?, ?, ?)', [nome, email, hash, is_admin ? 1 : 0]);
   await seedCategories(info.lastID);
   res.json({ ok: true });
 });
 
 app.post('/api/admin/users/:uid/reset-password', requireLogin, requireAdmin, async (req, res) => {
-  const hash = bcrypt.hashSync(req.body.password, 10);
+  const hash = hashPassword(req.body.password);
   await dbRun('UPDATE user SET password_hash = ? WHERE id = ?', [hash, req.params.uid]);
   res.json({ ok: true });
 });
