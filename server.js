@@ -41,12 +41,14 @@ function hashPassword(password) {
 const app = express();
 
 // ── TURSO (libSQL) ────────────────────────────
+// Corrige caso o painel de hospedagem corte o "l" inicial de "libsql://"
+const tursoUrl = (process.env.TURSO_URL || '').replace(/^ibsql:/, 'libsql:');
 const db = createClient({
-  url:       process.env.TURSO_URL,
+  url:       tursoUrl,
   authToken: process.env.TURSO_TOKEN,
 });
 console.log('--------------------------------------------------');
-console.log('TURSO CONECTADO:', process.env.TURSO_URL);
+console.log('TURSO CONECTADO:', tursoUrl);
 console.log('--------------------------------------------------');
 
 // ── LIBSQL HELPERS ────────────────────────────
