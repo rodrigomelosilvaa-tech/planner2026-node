@@ -70,7 +70,6 @@
             <button class="pr-tab"        onclick="switchPrTab('rot',this)"   title="Rotina">🔄</button>
             <button class="pr-tab"        onclick="switchPrTab('imp',this)"   title="Imprevistos">⚡</button>
             <button class="pr-tab"        onclick="switchPrTab('stats',this)" title="Progresso">📊</button>
-            <button class="pr-tab pr-collapse-btn" onclick="toggleRightSidebar()" title="Recolher painel">◀</button>
           </div>
           <div class="pr-panel active" id="pr-bl">
             <div class="pr-filter" id="pr-filter"></div>
@@ -322,18 +321,18 @@
           </div>
           <div class="mf"><label class="ml">Prazo</label><input class="field-in" id="cm-prazo" type="date"></div>
         </div>
+        <div class="mrow" id="cm-kanban-row">
+          <div class="mf" style="flex:1"><label class="ml">Etapa Kanban</label>
+            <select class="field-sel" id="cm-kanban-col">
+              <option value="">⬜ Inbox (sem etapa)</option>
+            </select>
+          </div>
+        </div>
         <!-- Visibilidade e Período (Sempre visível conforme desejo do usuário) -->
         <div class="mrow">
           <div class="mf"><label class="ml">Horário</label><input class="field-in" id="cm-horario" type="time"></div>
           <div class="mf"><label class="ml">Data de Início</label><input class="field-in" id="cm-data-inicio" type="date"></div>
           <div class="mf"><label class="ml">Data de Término <span style="opacity:.5">(opcional)</span></label><input class="field-in" id="cm-data-fim" type="date"></div>
-        </div>
-        <div class="mrow">
-          <div class="mf"><label class="ml">Etapa Kanban <span style="opacity:.5">(opcional)</span></label>
-            <select class="field-sel" id="cm-kanban-col">
-              <option value="">— Sem etapa —</option>
-            </select>
-          </div>
         </div>
         <div class="mf" id="cm-dias-check-row" style="margin-top:8px"><label class="ml">Dias de Aparição no Planner (Recorrência)</label>
           <div id="cm-dias-check" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px"></div>
@@ -376,6 +375,7 @@
     <div class="cm-foot">
       <button class="btn-p" onclick="saveCardModal()">💾 Salvar</button>
       <button class="btn-g" onclick="closeCardModal()">Cancelar</button>
+      <button class="btn-d cm-unschedule-btn" id="cm-unschedule-btn" onclick="unscheduleCard()" title="Remove datas e horário — item volta ao backlog sem agendamento" style="display:none">📤 Remover do Planner</button>
       <div style="margin-left:auto;font-family:var(--font-m);font-size:9px;color:var(--text3)" id="cm-saved-msg"></div>
     </div>
   </div>

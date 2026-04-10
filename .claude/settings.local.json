@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e ':*)",
+      "Bash(timeout 8 node server.js)",
+      "Bash(node migrate-to-turso.js)",
+      "Bash(node cleanup-backlog-dates.js)"
+    ]
+  }
+}
