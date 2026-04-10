@@ -241,6 +241,9 @@ function buildGrade() {
       var recItems = S.rotina.concat(S.backlog.filter(function(b){ return !b.concluido; }));
       recItems.filter(function(it){
         return findSlot(it.horario)===time && itemAtivoNoSlot(it, d, S.weekKey);
+      }).sort(function(a, b) {
+        var ha = a.horario || '00:00', hb = b.horario || '00:00';
+        return ha < hb ? -1 : ha > hb ? 1 : 0;
       }).forEach(function(it){
         var rdKey = it.id+'_'+d;
         var state = S.rotinaDone[rdKey];
@@ -279,6 +282,13 @@ function buildGrade() {
             }
           }
         });
+      });
+      allSemanaItems.sort(function(a, b) {
+        var ha = a.horario || '00:00', hb = b.horario || '00:00';
+        if (ha !== hb) return ha < hb ? -1 : 1;
+        var da = a.data_item || a.prazo || a.data || '';
+        var db = b.data_item || b.prazo || b.data || '';
+        return da < db ? -1 : da > db ? 1 : 0;
       });
       allSemanaItems.forEach(function(item){ cell.appendChild(makeBlk(item,key)); });
 
@@ -332,8 +342,10 @@ function makeBlk(item, cellKey) {
     }
   }
 
+  var horarioTag = item.horario ? '<span class="blk-horario">'+item.horario+'</span>' : '';
   div.innerHTML='<div class="blk-t">'+(item.titulo||item.texto)+'</div>'
     +'<div class="blk-meta">'
+    +horarioTag
     +'<span class="blk-id">'+(item._isRotina?item._rId:item.id)+'</span>'
     +'<span class="blk-tag">'+catIcon(item.categoria_id)+'</span>'
     +typeTag+deadlineTag+clBadge+commBadge+vincBadge

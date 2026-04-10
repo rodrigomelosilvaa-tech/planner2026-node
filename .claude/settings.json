@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la /c/Projetos/GIT/plannerNodev2/planner2026-node/.env*)",
+      "Bash(ls /c/Projetos/GIT/plannerNodev2/planner2026-node/*.env)",
+      "Bash(npm install:*)",
+      "Bash(node --check server.js)",
+      "Bash(node --check ai/chat.js)",
+      "Bash(node --check ai/tools.js)"
+    ],
+    "additionalDirectories": [
+      "c:\\Projetos\\GIT\\plannerNodev2\\planner2026-node"
+    ]
+  }
+}

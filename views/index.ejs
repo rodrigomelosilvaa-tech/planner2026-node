@@ -6,6 +6,7 @@
 <title>Planner 2026</title>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,600;1,400&family=JetBrains+Mono:wght@300;400;500&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/main.css">
+<link rel="stylesheet" href="/static/css/chat.css">
 </head>
 <body>
 
@@ -409,5 +410,33 @@
 </div>
 
 <script src="/static/js/app.js"></script>
+<script src="/static/js/chat.js" defer></script>
+
+<!-- ── AI CHAT ──────────────────────────────────────────────────── -->
+<button class="ai-chat-btn" id="ai-chat-btn" onclick="toggleChatPanel()" title="Assistente IA">
+  <i class="ai-chat-icon">✦</i>
+</button>
+
+<div class="ai-chat-panel" id="ai-chat-panel">
+  <div class="ai-chat-header">
+    <span class="ai-chat-title">Assistente IA</span>
+    <div class="ai-chat-header-actions">
+      <button class="ai-chat-act-btn" onclick="clearChatHistory()" title="Limpar conversa">↺</button>
+      <button class="ai-chat-act-btn" onclick="toggleChatPanel()" title="Fechar">✕</button>
+    </div>
+  </div>
+  <div class="ai-chat-messages" id="ai-chat-messages">
+    <div class="ai-msg ai-msg-assistant">
+      <span class="ai-msg-text">Olá! Posso criar rotinas, adicionar itens ao planner, gerenciar o backlog e responder sobre sua agenda. Como posso ajudar?</span>
+    </div>
+  </div>
+  <div class="ai-chat-input-area">
+    <textarea class="ai-chat-input" id="ai-chat-input"
+      placeholder="Ex: Cria uma rotina de academia às 7h nas segundas..."
+      rows="2"
+      onkeydown="handleChatKey(event)"></textarea>
+    <button class="ai-chat-send" id="ai-chat-send" onclick="sendChatMessage()">↑</button>
+  </div>
+</div>
 </body>
 </html>

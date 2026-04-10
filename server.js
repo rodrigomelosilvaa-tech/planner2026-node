@@ -5,8 +5,8 @@ const express  = require('express');
 const session  = require('express-session');
 const bcrypt   = require('bcryptjs');
 const crypto   = require('crypto');
-const sqlite3  = require('sqlite3').verbose();
 const path     = require('path');
+const { createClient } = require('@libsql/client');
 
 // Carrega variáveis de ambiente do arquivo .env
 require('dotenv').config();
@@ -39,44 +39,36 @@ function hashPassword(password) {
 }
 
 const app = express();
-const dbPath = path.isAbsolute(process.env.DB_PATH || 'app.db') 
-  ? process.env.DB_PATH 
-  : path.join(__dirname, process.env.DB_PATH || 'app.db');
 
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('Erro ao abrir o banco de dados:', err.message);
-  } else {
-    console.log('--------------------------------------------------');
-    console.log('BANCO DE DADOS CONECTADO');
-    console.log('Caminho absoluto:', path.resolve(dbPath));
-    console.log('--------------------------------------------------');
-  }
+// ── TURSO (libSQL) ────────────────────────────
+const db = createClient({
+  url:       process.env.TURSO_URL,
+  authToken: process.env.TURSO_TOKEN,
 });
+console.log('--------------------------------------------------');
+console.log('TURSO CONECTADO:', process.env.TURSO_URL);
+console.log('--------------------------------------------------');
 
-// ── SQLITE HELPERS (Promise wrappers) ─────────
-function dbRun(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) reject(err);
-      else resolve({ lastID: this.lastID, changes: this.changes });
-    });
-  });
+// ── LIBSQL HELPERS ────────────────────────────
+async function dbRun(sql, params = []) {
+  const r = await db.execute({ sql, args: params });
+  return { lastID: Number(r.lastInsertRowid), changes: r.rowsAffected };
 }
-function dbGet(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => { err ? reject(err) : resolve(row || null); });
-  });
+async function dbGet(sql, params = []) {
+  const r = await db.execute({ sql, args: params });
+  if (!r.rows.length) return null;
+  return Object.fromEntries(r.columns.map((c, i) => [c, r.rows[0][i]]));
 }
-function dbAll(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => { err ? reject(err) : resolve(rows || []); });
-  });
+async function dbAll(sql, params = []) {
+  const r = await db.execute({ sql, args: params });
+  return r.rows.map(row => Object.fromEntries(r.columns.map((c, i) => [c, row[i]])));
 }
-function dbExec(sql) {
-  return new Promise((resolve, reject) => {
-    db.exec(sql, err => { err ? reject(err) : resolve(); });
-  });
+async function dbExec(sql) {
+  // Executa múltiplos statements separados por ponto-e-vírgula
+  const stmts = sql.split(';').map(s => s.trim()).filter(s => s.length > 0);
+  for (const stmt of stmts) {
+    await db.execute({ sql: stmt, args: [] });
+  }
 }
 
 // ── MIDDLEWARES ───────────────────────────────
@@ -872,6 +864,12 @@ app.delete('/api/kanban/colunas/:cid', requireLogin, async (req, res) => {
   await dbRun('UPDATE imprevisto SET kanban_coluna_id = NULL WHERE user_id = ? AND kanban_coluna_id = ?', [uid, c.id]);
   await dbRun('DELETE FROM kanban_coluna WHERE id = ?', [c.id]);
   res.json({ ok: true });
+});
+
+// ── AI CHAT ───────────────────────────────────
+require('./ai/chat')(app, db, {
+  dbAll, dbRun, dbGet, getWeekKey, nextPlanId,
+  parseJ, getSemanaObj, requireLogin, todayStr, ts
 });
 
 // ── START ─────────────────────────────────────
