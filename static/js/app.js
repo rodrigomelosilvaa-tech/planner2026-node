@@ -269,28 +269,16 @@ function buildGrade() {
         }), key));
       });
 
-      // Itens customizados (S.semana)
-      // Procuramos itens que pertencem a esta célula OU itens multi-dia que batem com este horário
-      var allSemanaItems = [];
-      Object.keys(S.semana).forEach(function(k){
-        (S.semana[k]||[]).forEach(function(it){
-          // Se o item bater com esse slot de tempo e estiver ativo no dia
-          if(findSlot(it.horario)===time && itemAtivoNoSlot(it, d, S.weekKey)){
-            // Evitar duplicados
-            if(!allSemanaItems.find(function(x){return x.id===it.id;})){
-              allSemanaItems.push(it);
-            }
-          }
-        });
-      });
-      allSemanaItems.sort(function(a, b) {
+      // Itens customizados (S.semana) — usa diretamente a chave da célula
+      var cellItems = (S.semana[key] || []).slice();
+      cellItems.sort(function(a, b) {
         var ha = a.horario || '00:00', hb = b.horario || '00:00';
         if (ha !== hb) return ha < hb ? -1 : 1;
         var da = a.data_item || a.prazo || a.data || '';
         var db = b.data_item || b.prazo || b.data || '';
         return da < db ? -1 : da > db ? 1 : 0;
       });
-      allSemanaItems.forEach(function(item){ cell.appendChild(makeBlk(item,key)); });
+      cellItems.forEach(function(item){ cell.appendChild(makeBlk(item,key)); });
 
       var ad=document.createElement('div'); ad.className='g-cell-add';
       var ab=document.createElement('button'); ab.className='g-cell-add-btn'; ab.textContent='+ adicionar';
@@ -656,14 +644,11 @@ function openCardModal(item, source, cellKey, defaultTime, dayIndex) {
     catSel.value = S.categorias[0]?S.categorias[0].id:'';
     document.getElementById('cm-tipo').value = source==='rotina'?'rotina':'unica';
     document.getElementById('cm-urg').value = 'm';
-    var defaultDate = todayISO;
-    if(dayIndex !== undefined && dayIndex !== null){
-      var wd = getWeekDates();
-      defaultDate = wd[dayIndex].toISOString().slice(0,10);
-    }
-    document.getElementById('cm-prazo').value = defaultDate;
+    // Prazo padrão = hoje + 7 dias
+    var prazoDefault = new Date(); prazoDefault.setDate(prazoDefault.getDate()+7);
+    document.getElementById('cm-prazo').value = prazoDefault.toISOString().slice(0,10);
     document.getElementById('cm-horario').value = defaultTime||'';
-    document.getElementById('cm-data-inicio').value = todayISO;
+    document.getElementById('cm-data-inicio').value = '';
     document.getElementById('cm-data-fim').value = '';
     document.getElementById('cm-desc').value = '';
     document.getElementById('cm-checklist-items').innerHTML = '';
@@ -763,6 +748,11 @@ async function saveCardModal(){
       } else {
         var cellKey=ctx.cellKey;
         if(!cellKey){var t=horario?horario.replace(':',''):'0900';cellKey='0_'+t;}
+        // Determina a data do dia clicado para data_item
+        var slotDayIdx = ctx.dayIndex !== undefined ? ctx.dayIndex : parseInt((cellKey||'0').split('_')[0]);
+        var wd2 = getWeekDates();
+        payload.data_item = wd2[slotDayIdx] ? wd2[slotDayIdx].toISOString().slice(0,10) : new Date().toISOString().slice(0,10);
+        payload.data_inicio = null;
         var cr=await api('POST','/api/semanas/'+S.weekKey+'/item',{cell_key:cellKey,item:payload});
         if(cr){S.semana[cellKey]=S.semana[cellKey]||[];S.semana[cellKey].push(cr);buildGrade();}
       }
