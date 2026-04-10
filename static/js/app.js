@@ -134,20 +134,19 @@ function itemAtivoNoSlot(it, dayIndex, weekMonday) {
   slotDate.setDate(mon.getDate() + dayIndex);
   var slotISO = slotDate.toISOString().slice(0,10);
 
-  // Se tiver período definido
+  // Se tiver período definido — data_fim vazia usa prazo como fallback
+  var effectiveFim = it.data_fim || (it.data_inicio ? (it.prazo || null) : null);
   if (it.data_inicio && it.data_inicio.length >= 10 && slotISO < it.data_inicio) return false;
-  if (it.data_fim && it.data_fim.length >= 10 && slotISO > it.data_fim) return false;
+  if (effectiveFim && effectiveFim.length >= 10 && slotISO > effectiveFim) return false;
 
   // Se tiver recorrência (dias específicos)
   if (it.dias && it.dias.length > 0) {
     return it.dias.indexOf(dayIndex) >= 0;
   }
-  
-  // Se for Execução Única (sem dias) mas o slot bate com o prazo ou está no período
-  // Se não tem 'dias', ele é considerado ativo em todos os dias do seu período [data_inicio, data_fim]
-  // ou no dia do seu 'prazo'/'data'.
+
+  // Execução única sem recorrência
   if (!it.dias || it.dias.length === 0) {
-    if (it.data_inicio && it.data_fim) return true; // Já validamos o range acima
+    if (it.data_inicio) return true; // período já validado acima
     var pz = it.prazo || it.data;
     if (pz && pz === slotISO) return true;
   }
@@ -191,6 +190,7 @@ function renderPage(p) {
   if (map[p]) map[p]();
 }
 function toggleSidebar(){document.getElementById('sidebar').classList.toggle('collapsed');}
+function toggleRightSidebar(){document.getElementById('planner-right').classList.toggle('collapsed');}
 function openAddModal() {
   var map = {
     planner:function(){openCardModal(null,'semana',null,null);},
@@ -267,6 +267,15 @@ function buildGrade() {
           done:state==='done'||it.concluido,
           _isRotina:true, _rId:it.id, _day:d
         }), key));
+      });
+
+      // Backlog com data_inicio definida aparece no planner como item de período
+      var inPlanner = getInPlannerIds();
+      S.backlog.filter(function(bl){
+        return !bl.concluido && bl.data_inicio && findSlot(bl.horario) === time && itemAtivoNoSlot(bl, d, S.weekKey);
+      }).sort(function(a,b){ return (a.horario||'') < (b.horario||'') ? -1 : 1; })
+      .forEach(function(bl){
+        cell.appendChild(makeBlk(Object.assign({}, bl, {_isBlPeriod: true, _blId: bl.id}), key));
       });
 
       // Itens customizados (S.semana) — usa diretamente a chave da célula
@@ -393,7 +402,7 @@ async function dropItem(drag,toKey,toTime){
   var item=drag.item, fromKey=drag.fromKey;
   if(fromKey===toKey) return;
   if(fromKey==='backlog'){
-    var ni=Object.assign({},item,{horario:toTime,done:false});
+    var ni=Object.assign({},item,{horario:toTime,done:false,_blId:item.id});
     delete ni._isRotina; delete ni._rId; delete ni._day;
     var created=await api('POST','/api/semanas/'+S.weekKey+'/item',{cell_key:toKey,item:ni});
     if(created){S.semana[toKey]=S.semana[toKey]||[];S.semana[toKey].push(created);}
@@ -412,6 +421,15 @@ async function dropItem(drag,toKey,toTime){
     }
   }
   buildGrade();
+}
+
+// ── HELPER: IDs do backlog que estão no planner ──
+function getInPlannerIds() {
+  var ids = {};
+  Object.values(S.semana).forEach(function(items) {
+    (items || []).forEach(function(it) { if (it._blId) ids[it._blId] = true; });
+  });
+  return ids;
 }
 
 // ── PR PAINEL ─────────────────────────────────
@@ -448,6 +466,7 @@ function mkFBtn(lbl,val){
 function renderBLMiniList(wrap){
   wrap.innerHTML='';
   var mon=getWeekDates()[0], sun=getWeekDates()[6];
+  var inPlanner=getInPlannerIds();
   var tasks=S.backlog.filter(function(t){
     if(t.concluido) return false;
     if(S.blFilter!=='all'&&t.categoria_id!==S.blFilter) return false;
@@ -465,11 +484,14 @@ function renderBLMiniList(wrap){
   tasks.forEach(function(task){
     var cat=getCat(task.categoria_id), noPrazo=!task.prazo;
     var dateStr=task.prazo?new Date(task.prazo+'T12:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}):'—';
+    var planned=!!inPlanner[task.id];
     var el=document.createElement('div');
-    el.className='bl-mini'+(noPrazo?' no-prazo':'');
+    el.className='bl-mini'+(noPrazo?' no-prazo':'')+(planned?' in-planner':'');
     el.draggable=true;
     el.innerHTML='<div class="bm-t"><span class="bm-dot" style="background:'+cat.cor+'"></span>'
-      +'<span>'+task.titulo+(noPrazo?'<span class="no-prazo-badge" style="margin-left:4px">sem prazo</span>':'')+'</span></div>'
+      +'<span>'+task.titulo+(noPrazo?'<span class="no-prazo-badge" style="margin-left:4px">sem prazo</span>':'')+'</span>'
+      +(planned?'<span class="bm-planned-badge" title="Já está no planner desta semana">📅</span>':'')
+      +'</div>'
       +'<div class="bm-meta">'
       +'<span class="bm-id">'+task.id+'</span>'
       +'<span style="font-family:var(--font-m);font-size:8px;color:'+(noPrazo?'var(--amber)':'var(--text3)')+'">'+dateStr+'</span>'
@@ -490,6 +512,20 @@ function renderBLMiniList(wrap){
     el.addEventListener('dragstart',function(){S.drag={item:Object.assign({},task),fromKey:'backlog'};el.classList.add('dragging');});
     el.addEventListener('dragend',function(){el.classList.remove('dragging');});
     wrap.appendChild(el);
+  });
+
+  // Drop zone: arrastar item do planner de volta para o backlog
+  wrap.addEventListener('dragover',function(e){ if(S.drag&&S.drag.item&&S.drag.item._blId){e.preventDefault();wrap.classList.add('bl-drop-target');} });
+  wrap.addEventListener('dragleave',function(){ wrap.classList.remove('bl-drop-target'); });
+  wrap.addEventListener('drop',async function(e){
+    wrap.classList.remove('bl-drop-target');
+    if(!S.drag||!S.drag.item||!S.drag.item._blId) return;
+    e.preventDefault();
+    await api('DELETE','/api/semanas/'+S.weekKey+'/item/'+S.drag.item.id);
+    var freshSemana=await api('GET','/api/semanas/'+S.weekKey);
+    if(freshSemana) S.semana=freshSemana;
+    S.drag=null;
+    buildGrade(); buildBLMini();
   });
 }
 
@@ -666,9 +702,9 @@ function openCardModal(item, source, cellKey, defaultTime, dayIndex) {
     // source='rotina' garante tipo='rotina' independente do campo armazenado
     document.getElementById('cm-tipo').value = (source==='rotina') ? 'rotina' : (editItem.tipo||'unica');
     document.getElementById('cm-urg').value = editItem.urgencia||'m';
-    document.getElementById('cm-prazo').value = editItem.prazo||editItem.data||editItem.data_inicio||todayISO;
+    document.getElementById('cm-prazo').value = editItem.prazo||editItem.data||'';
     document.getElementById('cm-horario').value = editItem.horario||'';
-    document.getElementById('cm-data-inicio').value = editItem.data_inicio||todayISO;
+    document.getElementById('cm-data-inicio').value = editItem.data_inicio||'';
     document.getElementById('cm-data-fim').value = editItem.data_fim||'';
     document.getElementById('cm-desc').value = editItem.descricao||'';
     renderCmChecklist(editItem.checklist||[]);
@@ -681,6 +717,16 @@ function openCardModal(item, source, cellKey, defaultTime, dayIndex) {
       });
     }
     item = editItem;
+  }
+
+  // Preencher kanban columns
+  var kSel = document.getElementById('cm-kanban-col');
+  if (kSel) {
+    kSel.innerHTML = '<option value="">— Sem etapa —</option>';
+    (S.kanbanCols||[]).forEach(function(col){
+      kSel.innerHTML += '<option value="'+col.id+'">'+col.titulo+'</option>';
+    });
+    kSel.value = (item && item.kanban_coluna_id) ? String(item.kanban_coluna_id) : '';
   }
 
   // Mostrar campos corretos por tipo
@@ -733,9 +779,11 @@ async function saveCardModal(){
   var dataFim=document.getElementById('cm-data-fim').value||null;
   var source=ctx.source;
 
+  var kanbanColId = (document.getElementById('cm-kanban-col')||{}).value || null;
   var payload={titulo:titulo,texto:titulo,categoria_id:cat,tipo:tipo,urgencia:urg,
       prazo:prazo,data:prazo,horario:horario,descricao:desc,checklist:checklist,dias:dias,
-      data_inicio:dataInicio,data_fim:dataFim};
+      data_inicio:dataInicio,data_fim:dataFim,
+      kanban_coluna_id:kanbanColId?parseInt(kanbanColId):null};
 
   if(ctx.isNew){
     if(source==='backlog'){

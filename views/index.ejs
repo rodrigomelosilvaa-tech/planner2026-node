@@ -70,6 +70,7 @@
             <button class="pr-tab"        onclick="switchPrTab('rot',this)"   title="Rotina">🔄</button>
             <button class="pr-tab"        onclick="switchPrTab('imp',this)"   title="Imprevistos">⚡</button>
             <button class="pr-tab"        onclick="switchPrTab('stats',this)" title="Progresso">📊</button>
+            <button class="pr-tab pr-collapse-btn" onclick="toggleRightSidebar()" title="Recolher painel">◀</button>
           </div>
           <div class="pr-panel active" id="pr-bl">
             <div class="pr-filter" id="pr-filter"></div>
@@ -326,6 +327,13 @@
           <div class="mf"><label class="ml">Horário</label><input class="field-in" id="cm-horario" type="time"></div>
           <div class="mf"><label class="ml">Data de Início</label><input class="field-in" id="cm-data-inicio" type="date"></div>
           <div class="mf"><label class="ml">Data de Término <span style="opacity:.5">(opcional)</span></label><input class="field-in" id="cm-data-fim" type="date"></div>
+        </div>
+        <div class="mrow">
+          <div class="mf"><label class="ml">Etapa Kanban <span style="opacity:.5">(opcional)</span></label>
+            <select class="field-sel" id="cm-kanban-col">
+              <option value="">— Sem etapa —</option>
+            </select>
+          </div>
         </div>
         <div class="mf" id="cm-dias-check-row" style="margin-top:8px"><label class="ml">Dias de Aparição no Planner (Recorrência)</label>
           <div id="cm-dias-check" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px"></div>
