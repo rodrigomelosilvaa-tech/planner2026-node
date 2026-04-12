@@ -7,6 +7,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,600;1,400&family=JetBrains+Mono:wght@300;400;500&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/main.css">
 <link rel="stylesheet" href="/static/css/chat.css">
+<link rel="stylesheet" href="/static/css/config.css">
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#0d1117">
 </head>
 <body>
 
@@ -24,6 +27,8 @@
     <div class="sb-link" data-page="categorias" onclick="goTo('categorias')"><span class="sb-icon">🏷️</span><span class="sb-lbl">Categorias</span></div>
     <div class="sb-link" data-page="imprevistos" onclick="goTo('imprevistos')"><span class="sb-icon">⚡</span><span class="sb-lbl">Imprevistos</span><span class="sb-badge red" id="bdg-imp"></span></div>
     <div class="sb-link" data-page="revisao" onclick="goTo('revisao')"><span class="sb-icon">📊</span><span class="sb-lbl">Revisão Semanal</span></div>
+    <div class="sb-link" data-page="canvas" onclick="goTo('canvas')"><span class="sb-icon">🗒️</span><span class="sb-lbl">Notas / Canvas</span></div>
+    <div class="sb-link" data-page="configuracoes" onclick="goTo('configuracoes')"><span class="sb-icon">⚙️</span><span class="sb-lbl">Configurações</span></div>
     <% if (currentUser.is_admin) { %>
     <div class="sb-link" onclick="window.location.href='/admin'"><span class="sb-icon">👑</span><span class="sb-lbl">Admin Panel</span></div>
     <% } %>
@@ -48,9 +53,12 @@
       <div class="tb-wlbl" id="tb-wlbl">—</div>
       <button class="nav-btn" onclick="nextWeek()">›</button>
       <button class="nav-btn today" onclick="goToday()">Hoje</button>
-      <button class="btn-icon" onclick="toggleRightSidebar()" title="Recolher Painel Direito">📊</button>
     </div>
-    <div style="display:flex;gap:8px">
+    <div style="display:flex;align-items:center;gap:8px;position:relative">
+      <button class="tb-alert-btn" id="tb-alert-btn" onclick="toggleAlerts()" title="Alertas">
+        🔔<span class="alert-badge" id="alert-badge" style="display:none">0</span>
+      </button>
+      <div class="alerts-panel" id="alerts-panel" style="display:none"></div>
       <button class="btn-p" onclick="openAddModal()">+ Adicionar</button>
     </div>
   </header>
@@ -66,24 +74,27 @@
         </div>
         <div class="planner-right" id="planner-right">
           <div class="pr-tabs">
+            <button class="pr-collapse-btn" id="pr-collapse-btn" onclick="toggleRightSidebar()" title="Recolher painel">«</button>
             <button class="pr-tab active" onclick="switchPrTab('bl',this)"    title="Backlog">📌</button>
             <button class="pr-tab"        onclick="switchPrTab('rot',this)"   title="Rotina">🔄</button>
             <button class="pr-tab"        onclick="switchPrTab('imp',this)"   title="Imprevistos">⚡</button>
             <button class="pr-tab"        onclick="switchPrTab('stats',this)" title="Progresso">📊</button>
           </div>
-          <div class="pr-panel active" id="pr-bl">
-            <div class="pr-filter" id="pr-filter"></div>
-            <div class="pr-list" id="pr-bl-list"></div>
-          </div>
-          <div class="pr-panel" id="pr-rot">
-            <div class="pr-list" id="pr-rot-list"></div>
-          </div>
-          <div class="pr-panel" id="pr-imp">
-            <div class="pr-imp-form" id="pr-imp-form"></div>
-            <div class="pr-list" id="pr-imp-list"></div>
-          </div>
-          <div class="pr-panel" id="pr-stats">
-            <div class="pr-list" id="pr-stats-list" style="padding:12px"></div>
+          <div class="pr-panels">
+            <div class="pr-panel active" id="pr-bl">
+              <div class="pr-filter" id="pr-filter"></div>
+              <div class="pr-list" id="pr-bl-list"></div>
+            </div>
+            <div class="pr-panel" id="pr-rot">
+              <div class="pr-list" id="pr-rot-list"></div>
+            </div>
+            <div class="pr-panel" id="pr-imp">
+              <div class="pr-imp-form" id="pr-imp-form"></div>
+              <div class="pr-list" id="pr-imp-list"></div>
+            </div>
+            <div class="pr-panel" id="pr-stats">
+              <div class="pr-list" id="pr-stats-list" style="padding:12px"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -279,6 +290,233 @@
       </div>
     </div>
 
+    <!-- CANVAS / NOTAS -->
+    <div class="page" id="page-canvas">
+      <!-- Top bar: boards + context format + zoom -->
+      <div class="canvas-topbar">
+        <div class="canvas-boards-list" id="canvas-boards-list"></div>
+        <button class="btn-p" style="flex-shrink:0;font-size:10px;padding:5px 12px" onclick="canvasNewBoard()">+ Board</button>
+        <div style="flex:1;min-width:6px"></div>
+        <!-- Text format bar (visible when text element focused) -->
+        <div class="cv-fmt-bar" id="cv-fmt-bar" style="display:none">
+          <button class="ct-fmt-btn" id="ctf-bold"      onclick="canvasFmt('bold')"      title="Negrito (Ctrl+B)"><b>B</b></button>
+          <button class="ct-fmt-btn" id="ctf-italic"    onclick="canvasFmt('italic')"    title="Itálico (Ctrl+I)"><i>I</i></button>
+          <button class="ct-fmt-btn" id="ctf-underline" onclick="canvasFmt('underline')" title="Sublinhado (Ctrl+U)"><u>U</u></button>
+          <div class="cv-fmt-sep"></div>
+          <select class="ct-fmt-sel" id="ct-font-family" onchange="canvasFmtFont(this.value)" title="Fonte">
+            <option value="inherit">Padrão</option>
+            <option value="'Segoe UI',sans-serif">Segoe UI</option>
+            <option value="Georgia,serif">Georgia</option>
+            <option value="'Courier New',monospace">Mono</option>
+            <option value="Arial,sans-serif">Arial</option>
+          </select>
+          <select class="ct-fmt-sel" id="ct-font-size" onchange="canvasFmtSize(this.value)" title="Tamanho">
+            <option value="10">10</option><option value="12">12</option>
+            <option value="14" selected>14</option><option value="18">18</option>
+            <option value="24">24</option><option value="32">32</option>
+            <option value="48">48</option>
+          </select>
+          <input type="color" class="ct-fmt-color" id="ct-text-color" onchange="canvasFmtColor(this.value)" title="Cor do texto" value="#000000">
+        </div>
+        <!-- Shape format bar (visible when shape selected) -->
+        <div class="cv-fmt-bar" id="ct-shape-fmt" style="display:none">
+          <label class="ct-fmt-lbl">Fundo</label>
+          <input type="color" class="ct-fmt-color" id="ct-shape-fundo" onchange="canvasShapeFmtColor('fundo',this.value)" value="#3b82f6">
+          <label class="ct-fmt-lbl">Borda</label>
+          <input type="color" class="ct-fmt-color" id="ct-shape-borda" onchange="canvasShapeFmtColor('borda',this.value)" value="#1d4ed8">
+          <label class="ct-fmt-lbl">Esp.</label>
+          <select class="ct-fmt-sel" id="ct-shape-esp" onchange="canvasShapeFmtEsp(this.value)">
+            <option value="0">0px</option><option value="1">1px</option>
+            <option value="2" selected>2px</option><option value="3">3px</option>
+            <option value="4">4px</option>
+          </select>
+        </div>
+        <!-- Pen format bar (visible when pen tool active) -->
+        <div class="cv-fmt-bar" id="cv-pen-fmt" style="display:none">
+          <label class="ct-fmt-lbl">Cor</label>
+          <input type="color" class="ct-fmt-color" id="cv-pen-color" onchange="S.canvasPenColor=this.value" value="#ffffff">
+          <label class="ct-fmt-lbl">Esp.</label>
+          <select class="ct-fmt-sel" id="cv-pen-width" onchange="S.canvasPenWidth=Number(this.value)">
+            <option value="2">2px</option><option value="3" selected>3px</option>
+            <option value="5">5px</option><option value="8">8px</option>
+            <option value="12">12px</option>
+          </select>
+        </div>
+        <div style="flex:1;min-width:6px"></div>
+        <!-- Zoom -->
+        <div class="ct-zoom-ctrl">
+          <button onclick="canvasZoomChange(-0.1)" title="Reduzir zoom (Ctrl+Scroll)">−</button>
+          <span id="ct-zoom-label">100%</span>
+          <button onclick="canvasZoomChange(0.1)" title="Aumentar zoom">+</button>
+          <button onclick="canvasZoomReset()" title="Reset zoom" style="font-size:10px;padding:2px 7px">⊡</button>
+        </div>
+      </div>
+      <!-- Body: vertical toolbar + canvas area -->
+      <div class="canvas-body" id="canvas-body">
+        <!-- Vertical toolbar (Miro-style) -->
+        <div class="cvt" id="canvas-vtoolbar">
+          <button class="cvt-btn active" data-tool="select" onclick="canvasSetTool('select')" title="Selecionar (V)">
+            <svg width="18" height="18" viewBox="0 0 18 18"><path d="M2 1.5l14 8.5-7.5 2-2 7.5z" fill="currentColor"/></svg>
+          </button>
+          <button class="cvt-btn" data-tool="pan" onclick="canvasSetTool('pan')" title="Mão — Mover (H)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 11V8a2 2 0 0 0-4 0v3M14 8V5a2 2 0 0 0-4 0v3M10 8V6a2 2 0 0 0-4 0v8l-2-2a2 2 0 0 0-2 2l4 6h12v-6a4 4 0 0 0-4-4z"/></svg>
+          </button>
+          <div class="cvt-sep"></div>
+          <button class="cvt-btn" data-tool="note" onclick="canvasSetTool('note')" title="Nota sticky (N)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+          </button>
+          <button class="cvt-btn" data-tool="text" onclick="canvasSetTool('text')" title="Texto (T)" style="font-weight:700;font-size:16px;letter-spacing:-.5px">T</button>
+          <button class="cvt-btn cvt-has-sub" data-tool="shape" id="cvt-shape-btn" onclick="canvasToggleShapeSub()" title="Formas (S)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="10" width="10" height="10" rx="1"/><circle cx="18" cy="6" r="4"/><path d="M14 20l4-8 4 8z" fill="none"/></svg>
+            <span class="cvt-sub-arr">›</span>
+          </button>
+          <button class="cvt-btn" data-tool="card" onclick="canvasSetTool('card')" title="Cartão (C)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><line x1="2" y1="9" x2="22" y2="9"/></svg>
+          </button>
+          <button class="cvt-btn" data-tool="pen" onclick="canvasSetTool('pen')" title="Caneta (P)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+          </button>
+          <div class="cvt-sep"></div>
+          <button class="cvt-btn" data-tool="frame" onclick="canvasSetTool('frame')" title="Quadro (F)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="1"/><rect x="7" y="7" width="10" height="10" rx="1" stroke-dasharray="3 2"/></svg>
+          </button>
+          <button class="cvt-btn" data-tool="emoji" onclick="canvasToggleEmojiPicker()" title="Adesivos (E)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9" stroke-width="3"/><line x1="15" y1="9" x2="15.01" y2="9" stroke-width="3"/></svg>
+          </button>
+          <button class="cvt-btn" data-tool="table" onclick="canvasSetTool('table')" title="Tabela (B)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+          </button>
+          <button class="cvt-btn" data-tool="comment" onclick="canvasSetTool('comment')" title="Comentário (M)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </button>
+        </div>
+        <!-- Shapes submenu panel (portal, positioned by JS) -->
+        <div class="cvt-panel" id="cvt-shape-sub" style="display:none">
+          <div class="cvt-panel-title">Formas</div>
+          <div class="cvt-shape-grid">
+            <button class="cvt-shape-item active" data-stype="rect" onclick="canvasSelectShapeType('rect')">
+              <svg width="48" height="36"><rect x="4" y="4" width="40" height="28" rx="3" fill="#3b82f6" stroke="#1d4ed8" stroke-width="2"/></svg>
+              <span>Retângulo</span>
+            </button>
+            <button class="cvt-shape-item" data-stype="circle" onclick="canvasSelectShapeType('circle')">
+              <svg width="48" height="36"><ellipse cx="24" cy="18" rx="17" ry="13" fill="#10b981" stroke="#059669" stroke-width="2"/></svg>
+              <span>Círculo</span>
+            </button>
+            <button class="cvt-shape-item" data-stype="diamond" onclick="canvasSelectShapeType('diamond')">
+              <svg width="48" height="36"><polygon points="24,2 44,18 24,34 4,18" fill="#f59e0b" stroke="#d97706" stroke-width="2"/></svg>
+              <span>Losango</span>
+            </button>
+            <button class="cvt-shape-item" data-stype="triangle" onclick="canvasSelectShapeType('triangle')">
+              <svg width="48" height="36"><polygon points="24,3 44,33 4,33" fill="#8b5cf6" stroke="#7c3aed" stroke-width="2"/></svg>
+              <span>Triângulo</span>
+            </button>
+            <button class="cvt-shape-item" data-stype="arrow" onclick="canvasSelectShapeType('arrow')">
+              <svg width="48" height="36"><defs><marker id="sah" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#94a3b8"/></marker></defs><line x1="5" y1="18" x2="36" y2="18" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round" marker-end="url(#sah)"/></svg>
+              <span>Seta</span>
+            </button>
+            <button class="cvt-shape-item" data-stype="line" onclick="canvasSelectShapeType('line')">
+              <svg width="48" height="36"><line x1="5" y1="18" x2="43" y2="18" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round"/></svg>
+              <span>Linha</span>
+            </button>
+          </div>
+        </div>
+        <!-- Emoji picker panel (portal, positioned by JS) -->
+        <div class="cvt-panel cvt-emoji-panel" id="cvt-emoji-panel" style="display:none">
+          <div class="cvt-panel-title">Adesivos</div>
+          <div class="cvt-emoji-grid" id="cvt-emoji-grid"></div>
+        </div>
+        <!-- Canvas area -->
+        <div class="canvas-surface-wrap" id="canvas-surface-wrap">
+          <div class="canvas-surface" id="canvas-surface">
+            <svg id="canvas-pen-svg" style="position:absolute;top:0;left:0;width:3200px;height:2400px;pointer-events:none;z-index:50;overflow:visible"></svg>
+          </div>
+          <div class="canvas-empty" id="canvas-empty">
+            <div class="canvas-empty-txt">Selecione ou crie um board para começar</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONFIGURAÇÕES -->
+    <div class="page" id="page-configuracoes">
+      <div class="cfg-page">
+        <h2 class="cfg-title">⚙️ Configurações</h2>
+
+        <!-- Notificações -->
+        <div class="cfg-card">
+          <div class="cfg-card-header">
+            <span class="cfg-card-icon">🔔</span>
+            <div>
+              <div class="cfg-card-ttl">Notificações</div>
+              <div class="cfg-card-sub">Receba alertas no celular e no computador quando uma atividade estiver chegando</div>
+            </div>
+            <label class="cfg-toggle" title="Ativar/desativar notificações">
+              <input type="checkbox" id="cfg-notif-ativa" onchange="cfgToggleNotif(this.checked)">
+              <span class="cfg-toggle-track"><span class="cfg-toggle-thumb"></span></span>
+            </label>
+          </div>
+          <div class="cfg-notif-body" id="cfg-notif-body">
+            <div class="cfg-row">
+              <label class="cfg-lbl">Avisar com antecedência</label>
+              <div class="cfg-row-ctrl">
+                <select class="cfg-sel" id="cfg-notif-min" onchange="cfgSaveMinutos(this.value)">
+                  <option value="1">1 minuto</option>
+                  <option value="3">3 minutos</option>
+                  <option value="5" selected>5 minutos</option>
+                  <option value="10">10 minutos</option>
+                  <option value="15">15 minutos</option>
+                  <option value="30">30 minutos</option>
+                </select>
+              </div>
+            </div>
+            <div class="cfg-row">
+              <div class="cfg-lbl">
+                Som de notificação
+                <span class="cfg-lbl-sub">Toca um som quando o alerta disparar</span>
+              </div>
+              <label class="cfg-toggle-sm">
+                <input type="checkbox" id="cfg-notif-som" onchange="cfgSaveSom(this.checked)">
+                <span class="cfg-toggle-track"><span class="cfg-toggle-thumb"></span></span>
+              </label>
+            </div>
+            <div class="cfg-row" id="cfg-row-som-tipo">
+              <div class="cfg-lbl">
+                Tipo de som
+                <span class="cfg-lbl-sub">Escolha o tom do alerta</span>
+              </div>
+              <div class="cfg-row-ctrl">
+                <select class="cfg-sel" id="cfg-notif-som-tipo" onchange="cfgSaveSomTipo(this.value)">
+                  <option value="sino">🔔 Sino</option>
+                  <option value="duplo">🔔🔔 Duplo</option>
+                  <option value="suave">🎵 Suave</option>
+                  <option value="urgente">🚨 Urgente</option>
+                  <option value="pop">💬 Pop</option>
+                </select>
+                <button class="cfg-preview-btn" onclick="cfgPreviewSom()" title="Testar som">
+                  ▶ Testar
+                </button>
+              </div>
+            </div>
+            <div class="cfg-notif-status" id="cfg-notif-status">
+              <span id="cfg-notif-status-txt">Verificando permissão...</span>
+              <button class="btn-p" id="cfg-notif-perm-btn" onclick="cfgPedirPermissao()" style="display:none;font-size:10px;padding:5px 12px">Permitir notificações</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sobre / versão -->
+        <div class="cfg-card">
+          <div class="cfg-card-header">
+            <span class="cfg-card-icon">ℹ️</span>
+            <div>
+              <div class="cfg-card-ttl">Sobre o Planner 2026</div>
+              <div class="cfg-card-sub">Versão 2.0 — Planner pessoal de rotinas, tarefas e metas</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -330,12 +568,24 @@
         </div>
         <!-- Visibilidade e Período (Sempre visível conforme desejo do usuário) -->
         <div class="mrow">
-          <div class="mf"><label class="ml">Horário</label><input class="field-in" id="cm-horario" type="time"></div>
+          <div class="mf"><label class="ml">Horário Início</label>
+            <div style="display:flex;align-items:center;gap:6px">
+              <input class="field-in" id="cm-horario" type="time" oninput="updateDuracao()">
+              <span style="color:var(--text3);font-size:11px">até</span>
+              <input class="field-in" id="cm-horario-fim" type="time" oninput="updateDuracao()">
+              <span id="cm-duracao" style="font-size:10px;color:var(--amber);font-family:var(--font-m);white-space:nowrap"></span>
+            </div>
+          </div>
           <div class="mf"><label class="ml">Data de Início</label><input class="field-in" id="cm-data-inicio" type="date"></div>
           <div class="mf"><label class="ml">Data de Término <span style="opacity:.5">(opcional)</span></label><input class="field-in" id="cm-data-fim" type="date"></div>
         </div>
         <div class="mf" id="cm-dias-check-row" style="margin-top:8px"><label class="ml">Dias de Aparição no Planner (Recorrência)</label>
           <div id="cm-dias-check" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px"></div>
+          <div id="cm-intervalo-row" style="display:flex;align-items:center;gap:6px;margin-top:8px;display:none">
+            <label class="ml" style="margin:0">Repetir a cada</label>
+            <input class="field-in" id="cm-intervalo" type="number" min="1" max="52" value="1" style="width:52px;text-align:center">
+            <span style="font-size:11px;color:var(--text3)">semana(s)</span>
+          </div>
         </div>
         </div>
       <!-- Descrição -->
@@ -418,7 +668,17 @@
 </div>
 
 <script src="/static/js/app.js"></script>
+<script src="/static/js/notif.js"></script>
 <script src="/static/js/chat.js" defer></script>
+<script>
+// Service Worker + Push Notifications bootstrap
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(function(reg) {
+    window._swReg = reg;
+    console.log('[SW] registrado:', reg.scope);
+  }).catch(function(e) { console.warn('[SW] falha:', e); });
+}
+</script>
 
 <!-- ── AI CHAT ──────────────────────────────────────────────────── -->
 <button class="ai-chat-btn" id="ai-chat-btn" onclick="toggleChatPanel()" title="Assistente IA">

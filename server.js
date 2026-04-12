@@ -3,6 +3,7 @@
 
 const express  = require('express');
 const session  = require('express-session');
+const FileStore = require('session-file-store')(session);
 const bcrypt   = require('bcryptjs');
 const crypto   = require('crypto');
 const path     = require('path');
@@ -77,13 +78,21 @@ async function dbExec(sql) {
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use('/static', express.static(path.join(__dirname, 'static')));
+// Service Worker must be served from root scope
+app.get('/sw.js', (_req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Service-Worker-Allowed', '/');
+  res.sendFile(path.join(__dirname, 'static', 'sw.js'));
+});
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(session({
+  store: new FileStore({ path: './sessions', ttl: 7*24*3600, retries: 1 }),
   secret: process.env.SESSION_SECRET || 'planner2026_secreta_padrao',
   resave: false,
   saveUninitialized: false,
-  cookie: { 
+  rolling: true,
+  cookie: {
     maxAge: 7 * 24 * 60 * 60 * 1000,
     secure: false // Ajustado para false para garantir login sem HTTPS na Hostinger
   }
@@ -91,6 +100,21 @@ app.use(session({
 
 // ── DB SCHEMA ─────────────────────────────────
 async function createSchema() {
+  // Add new columns to existing tables (safe – IF NOT EXISTS not supported in ADD COLUMN for Turso, so we try/catch)
+  const alterStmts = [
+    'ALTER TABLE rotina    ADD COLUMN horario_fim TEXT',
+    'ALTER TABLE rotina    ADD COLUMN intervalo_semanas INTEGER DEFAULT 1',
+    'ALTER TABLE backlog   ADD COLUMN horario_fim TEXT',
+    'ALTER TABLE backlog   ADD COLUMN horario     TEXT',
+    'ALTER TABLE imprevisto ADD COLUMN horario_fim TEXT',
+    'ALTER TABLE canvas_note ADD COLUMN note_type TEXT NOT NULL DEFAULT \'sticky\'',
+    'ALTER TABLE configuracao ADD COLUMN push_sub TEXT',
+    "ALTER TABLE configuracao ADD COLUMN notif_som_tipo TEXT NOT NULL DEFAULT 'sino'",
+  ];
+  for (const stmt of alterStmts) {
+    try { await dbRun(stmt, []); } catch(_) { /* column already exists */ }
+  }
+
   await dbExec(`
     CREATE TABLE IF NOT EXISTS user (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -185,6 +209,48 @@ async function createSchema() {
       dados          TEXT DEFAULT '{}',
       planos_action  TEXT DEFAULT '[]',
       UNIQUE(user_id, week_key)
+    );
+    CREATE TABLE IF NOT EXISTS canvas_board (
+      id      INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES user(id),
+      titulo  TEXT    NOT NULL DEFAULT 'Board sem título',
+      criado  TEXT
+    );
+    CREATE TABLE IF NOT EXISTS canvas_note (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id   INTEGER NOT NULL REFERENCES user(id),
+      board_id  INTEGER NOT NULL,
+      conteudo  TEXT    NOT NULL DEFAULT '',
+      pos_x     INTEGER NOT NULL DEFAULT 80,
+      pos_y     INTEGER NOT NULL DEFAULT 80,
+      largura   INTEGER NOT NULL DEFAULT 220,
+      altura    INTEGER NOT NULL DEFAULT 160,
+      cor       TEXT    NOT NULL DEFAULT '#f5c842',
+      note_type TEXT    NOT NULL DEFAULT 'sticky',
+      criado    TEXT
+    );
+    CREATE TABLE IF NOT EXISTS configuracao (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id        INTEGER NOT NULL UNIQUE REFERENCES user(id),
+      notif_ativas   INTEGER NOT NULL DEFAULT 0,
+      notif_minutos  INTEGER NOT NULL DEFAULT 5,
+      notif_som      INTEGER NOT NULL DEFAULT 1,
+      atualizado     TEXT
+    );
+    CREATE TABLE IF NOT EXISTS canvas_shape (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL REFERENCES user(id),
+      board_id   INTEGER NOT NULL,
+      tipo       TEXT    NOT NULL DEFAULT 'rect',
+      pos_x      INTEGER NOT NULL DEFAULT 100,
+      pos_y      INTEGER NOT NULL DEFAULT 100,
+      largura    INTEGER NOT NULL DEFAULT 160,
+      altura     INTEGER NOT NULL DEFAULT 100,
+      cor_fundo  TEXT    NOT NULL DEFAULT '#3b82f6',
+      cor_borda  TEXT    NOT NULL DEFAULT '#1d4ed8',
+      espessura  INTEGER NOT NULL DEFAULT 2,
+      texto      TEXT    NOT NULL DEFAULT '',
+      criado     TEXT
     );
   `);
 }
@@ -390,6 +456,10 @@ app.delete('/api/admin/users/:uid', requireLogin, requireAdmin, async (req, res)
   await dbRun('DELETE FROM semana       WHERE user_id = ?', [uid]);
   await dbRun('DELETE FROM revisao      WHERE user_id = ?', [uid]);
   await dbRun('DELETE FROM counter      WHERE user_id = ?', [uid]);
+  await dbRun('DELETE FROM canvas_note  WHERE user_id = ?', [uid]);
+  await dbRun('DELETE FROM canvas_shape WHERE user_id = ?', [uid]);
+  await dbRun('DELETE FROM canvas_board WHERE user_id = ?', [uid]);
+  await dbRun('DELETE FROM configuracao  WHERE user_id = ?', [uid]);
   await dbRun('DELETE FROM user         WHERE id = ?',      [uid]);
   res.json({ ok: true });
 });
@@ -445,14 +515,14 @@ app.post('/api/rotina', requireLogin, async (req, res) => {
   const d   = req.body;
   const rid = await nextPlanId(uid);
   await dbRun(
-    `INSERT INTO rotina (id,user_id,titulo,categoria_id,horario,dias,ativo,tipo,data_inicio,data_fim,descricao,comentarios,checklist,vinculos)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [rid, uid, d.titulo || '', d.categoria_id || null, d.horario || null,
-     JSON.stringify(d.dias || []), d.ativo !== false ? 1 : 0, d.tipo || 'rotina',
+    `INSERT INTO rotina (id,user_id,titulo,categoria_id,horario,horario_fim,intervalo_semanas,dias,ativo,tipo,data_inicio,data_fim,descricao,comentarios,checklist,vinculos)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [rid, uid, d.titulo || '', d.categoria_id || null, d.horario || null, d.horario_fim || null,
+     d.intervalo_semanas || 1, JSON.stringify(d.dias || []), d.ativo !== false ? 1 : 0, d.tipo || 'rotina',
      d.data_inicio || null, d.data_fim || null, d.descricao || '',
      JSON.stringify(d.comentarios || []), JSON.stringify(d.checklist || []), JSON.stringify(d.vinculos || [])]
   );
-  res.status(201).json(Object.assign({}, d, { id: rid, ativo: true, tipo: d.tipo || 'rotina', dias: d.dias || [] }));
+  res.status(201).json(Object.assign({}, d, { id: rid, ativo: true, tipo: d.tipo || 'rotina', dias: d.dias || [], intervalo_semanas: d.intervalo_semanas||1 }));
 });
 
 app.put('/api/rotina/:rid', requireLogin, async (req, res) => {
@@ -465,7 +535,9 @@ app.put('/api/rotina/:rid', requireLogin, async (req, res) => {
     const setField = (col, val) => { fields.push(`${col} = ?`); vals.push(val); };
     if ('titulo'       in d) setField('titulo',       d.titulo);
     if ('categoria_id' in d) setField('categoria_id', d.categoria_id);
-    if ('horario'      in d) setField('horario',      d.horario);
+    if ('horario'           in d) setField('horario',           d.horario);
+    if ('horario_fim'       in d) setField('horario_fim',       d.horario_fim);
+    if ('intervalo_semanas' in d) setField('intervalo_semanas', d.intervalo_semanas||1);
     if ('dias'         in d) setField('dias',         JSON.stringify(d.dias));
     if ('ativo'        in d) setField('ativo',        d.ativo ? 1 : 0);
     if ('tipo'         in d) setField('tipo',         d.tipo);
@@ -521,12 +593,13 @@ app.post('/api/backlog', requireLogin, async (req, res) => {
   const d   = req.body;
   const bid = await nextPlanId(uid);
   await dbRun(
-    `INSERT INTO backlog (id,user_id,titulo,categoria_id,urgencia,prazo,tipo,concluido,criado,descricao,comentarios,checklist,vinculos,kanban_coluna_id,data_inicio,data_fim,dias)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO backlog (id,user_id,titulo,categoria_id,urgencia,prazo,tipo,concluido,criado,descricao,comentarios,checklist,vinculos,kanban_coluna_id,data_inicio,data_fim,dias,horario,horario_fim)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [bid, uid, d.titulo || '', d.categoria_id || null, d.urgencia || null, d.prazo || null,
      d.tipo || null, d.concluido ? 1 : 0, d.criado || todayStr(), d.descricao || '',
      JSON.stringify(d.comentarios || []), JSON.stringify(d.checklist || []), JSON.stringify(d.vinculos || []),
-     d.kanban_coluna_id || null, d.data_inicio || null, d.data_fim || null, JSON.stringify(d.dias || [])]
+     d.kanban_coluna_id || null, d.data_inicio || null, d.data_fim || null, JSON.stringify(d.dias || []),
+     d.horario || null, d.horario_fim || null]
   );
   res.status(201).json(Object.assign({}, d, { id: bid, concluido: false, criado: d.criado || todayStr() }));
 });
@@ -547,6 +620,8 @@ app.put('/api/backlog/:bid', requireLogin, async (req, res) => {
     if ('criado'          in d) sf('criado',          d.criado);
     if ('descricao'       in d) sf('descricao',       d.descricao);
     if ('kanban_coluna_id'in d) sf('kanban_coluna_id',d.kanban_coluna_id);
+    if ('horario'         in d) sf('horario',         d.horario);
+    if ('horario_fim'     in d) sf('horario_fim',     d.horario_fim);
     if ('data_inicio'     in d) sf('data_inicio',     d.data_inicio);
     if ('data_fim'        in d) sf('data_fim',        d.data_fim);
     if ('comentarios'     in d) sf('comentarios',     JSON.stringify(d.comentarios));
@@ -734,6 +809,8 @@ app.put('/api/imprevistos/:iid', requireLogin, async (req, res) => {
   if ('resolvido'       in d) sf('resolvido',       d.resolvido ? 1 : 0);
   if ('descricao'       in d) sf('descricao',       d.descricao);
   if ('kanban_coluna_id'in d) sf('kanban_coluna_id',d.kanban_coluna_id);
+  if ('horario'         in d) sf('horario',         d.horario);
+  if ('horario_fim'     in d) sf('horario_fim',     d.horario_fim);
   if ('data_inicio'     in d) sf('data_inicio',     d.data_inicio);
   if ('data_fim'        in d) sf('data_fim',        d.data_fim);
   if ('comentarios'     in d) sf('comentarios',     JSON.stringify(d.comentarios));
@@ -865,6 +942,183 @@ app.delete('/api/kanban/colunas/:cid', requireLogin, async (req, res) => {
   await dbRun('UPDATE backlog    SET kanban_coluna_id = NULL WHERE user_id = ? AND kanban_coluna_id = ?', [uid, c.id]);
   await dbRun('UPDATE imprevisto SET kanban_coluna_id = NULL WHERE user_id = ? AND kanban_coluna_id = ?', [uid, c.id]);
   await dbRun('DELETE FROM kanban_coluna WHERE id = ?', [c.id]);
+  res.json({ ok: true });
+});
+
+// ── CANVAS / NOTAS ────────────────────────────
+
+app.get('/api/canvas/boards', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  const rows = await dbAll('SELECT * FROM canvas_board WHERE user_id = ? ORDER BY id', [uid]);
+  res.json(rows);
+});
+
+app.post('/api/canvas/boards', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  const titulo = req.body.titulo || 'Novo Board';
+  const info = await dbRun('INSERT INTO canvas_board (user_id, titulo, criado) VALUES (?, ?, ?)', [uid, titulo, todayStr()]);
+  res.status(201).json({ id: info.lastID, titulo, criado: todayStr() });
+});
+
+app.put('/api/canvas/boards/:bid', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  await dbRun('UPDATE canvas_board SET titulo = ? WHERE id = ? AND user_id = ?', [req.body.titulo || '', req.params.bid, uid]);
+  res.json({ ok: true });
+});
+
+app.delete('/api/canvas/boards/:bid', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  await dbRun('DELETE FROM canvas_note  WHERE board_id = ? AND user_id = ?', [req.params.bid, uid]);
+  await dbRun('DELETE FROM canvas_shape WHERE board_id = ? AND user_id = ?', [req.params.bid, uid]);
+  await dbRun('DELETE FROM canvas_board WHERE id = ? AND user_id = ?',       [req.params.bid, uid]);
+  res.json({ ok: true });
+});
+
+app.get('/api/canvas/boards/:bid/notes', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  const board = await dbGet('SELECT id FROM canvas_board WHERE id = ? AND user_id = ?', [req.params.bid, uid]);
+  if (!board) return res.status(404).json({ error: 'not found' });
+  const rows = await dbAll('SELECT * FROM canvas_note WHERE board_id = ? AND user_id = ?', [req.params.bid, uid]);
+  res.json(rows);
+});
+
+app.post('/api/canvas/boards/:bid/notes', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  const board = await dbGet('SELECT id FROM canvas_board WHERE id = ? AND user_id = ?', [req.params.bid, uid]);
+  if (!board) return res.status(404).json({ error: 'not found' });
+  const d = req.body;
+  const nt = d.note_type || 'sticky';
+  const info = await dbRun(
+    'INSERT INTO canvas_note (user_id, board_id, conteudo, pos_x, pos_y, largura, altura, cor, note_type, criado) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    [uid, req.params.bid, d.conteudo||'', d.pos_x||80, d.pos_y||80, d.largura||220, d.altura||160, d.cor||'#f5c842', nt, todayStr()]
+  );
+  res.status(201).json({ id: info.lastID, board_id: Number(req.params.bid),
+    conteudo: d.conteudo||'', pos_x: d.pos_x||80, pos_y: d.pos_y||80,
+    largura: d.largura||220, altura: d.altura||160, cor: d.cor||'#f5c842', note_type: nt });
+});
+
+app.put('/api/canvas/notes/:nid', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  const d = req.body;
+  const fields = [], vals = [];
+  const sf = (col, val) => { fields.push(`${col} = ?`); vals.push(val); };
+  if ('conteudo'  in d) sf('conteudo',  d.conteudo);
+  if ('pos_x'     in d) sf('pos_x',     d.pos_x);
+  if ('pos_y'     in d) sf('pos_y',     d.pos_y);
+  if ('largura'   in d) sf('largura',   d.largura);
+  if ('altura'    in d) sf('altura',    d.altura);
+  if ('cor'       in d) sf('cor',       d.cor);
+  if ('note_type' in d) sf('note_type', d.note_type);
+  if (fields.length) {
+    vals.push(req.params.nid, uid);
+    await dbRun(`UPDATE canvas_note SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, vals);
+  }
+  res.json({ ok: true });
+});
+
+app.delete('/api/canvas/notes/:nid', requireLogin, async (req, res) => {
+  await dbRun('DELETE FROM canvas_note WHERE id = ? AND user_id = ?', [req.params.nid, req.session.userId]);
+  res.json({ ok: true });
+});
+
+// ── CANVAS SHAPES ─────────────────────────────
+
+app.get('/api/canvas/boards/:bid/shapes', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  const board = await dbGet('SELECT id FROM canvas_board WHERE id = ? AND user_id = ?', [req.params.bid, uid]);
+  if (!board) return res.status(404).json({ error: 'not found' });
+  const rows = await dbAll('SELECT * FROM canvas_shape WHERE board_id = ? AND user_id = ?', [req.params.bid, uid]);
+  res.json(rows);
+});
+
+app.post('/api/canvas/boards/:bid/shapes', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  const board = await dbGet('SELECT id FROM canvas_board WHERE id = ? AND user_id = ?', [req.params.bid, uid]);
+  if (!board) return res.status(404).json({ error: 'not found' });
+  const d = req.body;
+  const info = await dbRun(
+    'INSERT INTO canvas_shape (user_id, board_id, tipo, pos_x, pos_y, largura, altura, cor_fundo, cor_borda, espessura, texto, criado) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+    [uid, req.params.bid, d.tipo||'rect', d.pos_x||100, d.pos_y||100, d.largura||160, d.altura||100,
+     d.cor_fundo||'#3b82f6', d.cor_borda||'#1d4ed8', d.espessura||2, d.texto||'', todayStr()]
+  );
+  res.status(201).json({ id: info.lastID, board_id: Number(req.params.bid),
+    tipo: d.tipo||'rect', pos_x: d.pos_x||100, pos_y: d.pos_y||100,
+    largura: d.largura||160, altura: d.altura||100,
+    cor_fundo: d.cor_fundo||'#3b82f6', cor_borda: d.cor_borda||'#1d4ed8',
+    espessura: d.espessura||2, texto: d.texto||'' });
+});
+
+app.put('/api/canvas/shapes/:sid', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  const d = req.body;
+  const fields = [], vals = [];
+  const sf = (col, val) => { fields.push(`${col} = ?`); vals.push(val); };
+  if ('pos_x'     in d) sf('pos_x',     d.pos_x);
+  if ('pos_y'     in d) sf('pos_y',     d.pos_y);
+  if ('largura'   in d) sf('largura',   d.largura);
+  if ('altura'    in d) sf('altura',    d.altura);
+  if ('cor_fundo' in d) sf('cor_fundo', d.cor_fundo);
+  if ('cor_borda' in d) sf('cor_borda', d.cor_borda);
+  if ('espessura' in d) sf('espessura', d.espessura);
+  if ('texto'     in d) sf('texto',     d.texto);
+  if (fields.length) {
+    vals.push(req.params.sid, uid);
+    await dbRun(`UPDATE canvas_shape SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, vals);
+  }
+  res.json({ ok: true });
+});
+
+app.delete('/api/canvas/shapes/:sid', requireLogin, async (req, res) => {
+  await dbRun('DELETE FROM canvas_shape WHERE id = ? AND user_id = ?', [req.params.sid, req.session.userId]);
+  res.json({ ok: true });
+});
+
+// ── CONFIGURAÇÕES ─────────────────────────────
+
+app.get('/api/config', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  let cfg = await dbGet('SELECT * FROM configuracao WHERE user_id = ?', [uid]);
+  if (!cfg) {
+    await dbRun('INSERT INTO configuracao (user_id, notif_ativas, notif_minutos, notif_som, atualizado) VALUES (?,0,5,1,?)', [uid, todayStr()]);
+    cfg = await dbGet('SELECT * FROM configuracao WHERE user_id = ?', [uid]);
+  }
+  res.json(cfg);
+});
+
+app.put('/api/config', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  const d   = req.body;
+  const fields = [], vals = [];
+  const sf = (col, val) => { fields.push(`${col} = ?`); vals.push(val); };
+  if ('notif_ativas'   in d) sf('notif_ativas',   d.notif_ativas  ? 1 : 0);
+  if ('notif_minutos'  in d) sf('notif_minutos',  Number(d.notif_minutos) || 5);
+  if ('notif_som'      in d) sf('notif_som',      d.notif_som ? 1 : 0);
+  if ('notif_som_tipo' in d) sf('notif_som_tipo', d.notif_som_tipo || 'sino');
+  sf('atualizado', todayStr());
+  // Upsert
+  const existing = await dbGet('SELECT id FROM configuracao WHERE user_id = ?', [uid]);
+  if (existing) {
+    vals.push(uid);
+    if (fields.length) await dbRun(`UPDATE configuracao SET ${fields.join(', ')} WHERE user_id = ?`, vals);
+  } else {
+    await dbRun('INSERT INTO configuracao (user_id, notif_ativas, notif_minutos, notif_som, atualizado) VALUES (?,?,?,?,?)',
+      [uid, d.notif_ativas ? 1 : 0, Number(d.notif_minutos)||5, d.notif_som ? 1 : 0, todayStr()]);
+  }
+  res.json({ ok: true });
+});
+
+// VAPID push subscription (Web Push)
+app.post('/api/push/subscribe', requireLogin, async (req, res) => {
+  // We store subscription in configuracao table as JSON
+  const uid = req.session.userId;
+  const sub = JSON.stringify(req.body);
+  const existing = await dbGet('SELECT id FROM configuracao WHERE user_id = ?', [uid]);
+  if (existing) {
+    await dbRun('UPDATE configuracao SET push_sub = ? WHERE user_id = ?', [sub, uid]);
+  } else {
+    await dbRun('INSERT INTO configuracao (user_id, notif_ativas, notif_minutos, notif_som, push_sub, atualizado) VALUES (?,1,5,1,?,?)',
+      [uid, sub, todayStr()]);
+  }
   res.json({ ok: true });
 });
 

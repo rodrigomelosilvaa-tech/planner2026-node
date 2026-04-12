@@ -1,0 +1,104 @@
+/* ── CONFIGURAÇÕES ───────────────────────────── */
+#page-configuracoes { overflow-y: auto; }
+.cfg-page {
+  max-width: 640px; margin: 32px auto; padding: 0 20px 40px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+.cfg-title {
+  font-family: var(--font-d); font-size: 22px; font-weight: 600;
+  color: var(--text1); margin-bottom: 8px;
+}
+.cfg-card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 12px; overflow: hidden;
+}
+.cfg-card-header {
+  display: flex; align-items: flex-start; gap: 14px;
+  padding: 18px 20px;
+}
+.cfg-card-icon { font-size: 22px; flex-shrink: 0; margin-top: 2px; }
+.cfg-card-ttl {
+  font-size: 14px; font-weight: 600; color: var(--text1); margin-bottom: 3px;
+}
+.cfg-card-sub { font-size: 11px; color: var(--text3); line-height: 1.5; }
+
+/* ── Toggle switch (shared) ─────────────────── */
+.cfg-toggle,
+.cfg-toggle-sm {
+  display: inline-flex; align-items: center; cursor: pointer;
+  user-select: none;
+}
+.cfg-toggle { flex-shrink: 0; margin-left: auto; }
+
+/* Hide native checkbox */
+.cfg-toggle  > input[type="checkbox"],
+.cfg-toggle-sm > input[type="checkbox"] {
+  position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none;
+}
+
+/* Track */
+.cfg-toggle  > input[type="checkbox"] + .cfg-toggle-track,
+.cfg-toggle-sm > input[type="checkbox"] + .cfg-toggle-track {
+  display: block; width: 44px; height: 24px; border-radius: 12px;
+  background: var(--bg3); border: 1px solid var(--border);
+  position: relative; transition: background .2s, border-color .2s;
+  flex-shrink: 0;
+}
+.cfg-toggle  > input[type="checkbox"]:checked + .cfg-toggle-track,
+.cfg-toggle-sm > input[type="checkbox"]:checked + .cfg-toggle-track {
+  background: var(--gold); border-color: var(--gold);
+}
+
+/* Thumb */
+.cfg-toggle-thumb {
+  position: absolute; top: 2px; left: 2px;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.3);
+  transition: transform .2s; pointer-events: none;
+}
+.cfg-toggle  > input[type="checkbox"]:checked + .cfg-toggle-track .cfg-toggle-thumb,
+.cfg-toggle-sm > input[type="checkbox"]:checked + .cfg-toggle-track .cfg-toggle-thumb {
+  transform: translateX(20px);
+}
+
+/* ── Notif body ─────────────────────────────── */
+.cfg-notif-body {
+  padding: 0 20px 16px; display: flex; flex-direction: column; gap: 0;
+  border-top: 1px solid var(--border); transition: opacity .2s;
+}
+.cfg-notif-disabled { opacity: .38; pointer-events: none; }
+.cfg-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border);
+}
+.cfg-row:last-child { border-bottom: none; }
+.cfg-lbl { font-size: 12px; color: var(--text2); line-height: 1.4; }
+.cfg-lbl-sub { font-size: 10px; color: var(--text3); display: block; margin-top: 2px; }
+.cfg-row-ctrl { display: flex; align-items: center; gap: 8px; }
+
+.cfg-sel {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text1); font-size: 11px;
+  padding: 5px 10px; cursor: pointer; transition: border-color .15s;
+}
+.cfg-sel:focus { border-color: var(--gold); outline: none; }
+
+/* Sound preview button */
+.cfg-preview-btn {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text2); font-size: 11px;
+  padding: 5px 10px; cursor: pointer; transition: all .15s;
+  display: flex; align-items: center; gap: 5px;
+}
+.cfg-preview-btn:hover { border-color: var(--gold); color: var(--gold); }
+.cfg-preview-btn:active { transform: scale(.96); }
+
+/* Status bar */
+.cfg-notif-status {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; border-radius: 8px; background: var(--bg3);
+  font-size: 11px; margin-top: 4px;
+}
+.cfg-status-ok   { color: #34d399; }
+.cfg-status-warn { color: var(--gold); }
+.cfg-status-err  { color: #f87171; }
