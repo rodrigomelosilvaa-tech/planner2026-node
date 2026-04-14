@@ -224,6 +224,10 @@ function goTo(page) {
   document.querySelectorAll('.sb-link').forEach(function(l){
     l.classList.toggle('active', l.dataset.page===page);
   });
+  // Sync bottom nav
+  document.querySelectorAll('.bn-item[data-page]').forEach(function(b){
+    b.classList.toggle('active', b.dataset.page===page);
+  });
   var labels = {planner:'Planner Semanal',calendario:'Calendário',kanban:'Quadro Kanban',backlog:'Backlog',
     rotina:'Rotina',categorias:'Categorias',imprevistos:'Imprevistos',revisao:'Revisão Semanal',
     canvas:'Notas / Canvas',configuracoes:'Configurações'};
@@ -231,6 +235,8 @@ function goTo(page) {
   if (ctx) ctx.textContent = labels[page]||page;
   var wnav = document.getElementById('tb-wnav');
   if (wnav) wnav.style.display = page==='planner'?'flex':'none';
+  // Close sidebar on mobile when navigating
+  if(window.innerWidth<=680) closeMobileSidebar();
   renderPage(page);
 }
 function renderPage(p) {
@@ -243,7 +249,27 @@ function renderPage(p) {
   };
   if (map[p]) map[p]();
 }
-function toggleSidebar(){document.getElementById('sidebar').classList.toggle('collapsed');}
+function toggleSidebar(){
+  var sb=document.getElementById('sidebar');
+  if(window.innerWidth<=680){
+    sb.classList.toggle('mobile-open');
+    var bd=document.getElementById('mobile-backdrop');
+    if(bd) bd.classList.toggle('active',sb.classList.contains('mobile-open'));
+  } else {
+    sb.classList.toggle('collapsed');
+  }
+}
+function toggleMobileSidebar(){
+  var sb=document.getElementById('sidebar');
+  var open=!sb.classList.contains('mobile-open');
+  sb.classList.toggle('mobile-open',open);
+  var bd=document.getElementById('mobile-backdrop');
+  if(bd) bd.classList.toggle('active',open);
+}
+function closeMobileSidebar(){
+  document.getElementById('sidebar').classList.remove('mobile-open');
+  var bd=document.getElementById('mobile-backdrop'); if(bd) bd.classList.remove('active');
+}
 function toggleRightSidebar(){
   var pr=document.getElementById('planner-right');
   var layout=document.querySelector('.planner-layout');
@@ -352,6 +378,25 @@ function buildGrade() {
     div.innerHTML='<div class="gh-name">'+DAYS[i]+'</div><div class="gh-date">'+d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+'</div>';
     hdr.appendChild(div);
   });
+
+  // Mobile day strip
+  var strip=document.getElementById('mobile-day-strip');
+  if(strip){
+    strip.innerHTML='';
+    var todayIdx=dates.findIndex(function(d){return d.getTime()===todayD.getTime();});
+    dates.forEach(function(d,i){
+      var isT=d.getTime()===todayD.getTime();
+      var btn=document.createElement('button');
+      btn.className='mds-day'+(isT?' is-today':'');
+      btn.dataset.day=i;
+      btn.innerHTML='<span class="mds-name">'+DAYS[i]+'</span>'
+        +'<span class="mds-date">'+d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+'</span>';
+      (function(di){btn.onclick=function(){mobileDaySelect(di);};})(i);
+      strip.appendChild(btn);
+    });
+    if(S.mobilePlannerDay===undefined) S.mobilePlannerDay=todayIdx>=0?todayIdx:0;
+  }
+
   var body=document.getElementById('grade-body'); body.innerHTML='';
 
   // ── Linha "Dia todo" ─────────────────────────────────────────────────
@@ -365,6 +410,7 @@ function buildGrade() {
       var slotDate=dates[dayIdx];
       var slotISO=localDateISO(slotDate);
       var adCell=document.createElement('div'); adCell.className='g-allday-cell';
+      adCell.dataset.day=dayIdx;
       adCell.addEventListener('dragover',function(e){e.preventDefault();adCell.classList.add('drag-over');});
       adCell.addEventListener('dragleave',function(e){if(!adCell.contains(e.relatedTarget))adCell.classList.remove('drag-over');});
       adCell.addEventListener('drop',async function(e){
@@ -415,6 +461,7 @@ function buildGrade() {
       var cell=document.createElement('div');
       cell.className='g-cell'+(isT?' is-today':'');
       cell.dataset.key=key;
+      cell.dataset.day=d;
 
       // Rotinas recorrentes
       S.rotina.filter(function(it){
@@ -500,6 +547,28 @@ function buildGrade() {
       body.appendChild(cell);
     }
   });
+
+  // Apply mobile day filter after all cells are built
+  if(window.innerWidth<=680) mobileDaySelect(S.mobilePlannerDay!==undefined?S.mobilePlannerDay:0);
+}
+
+function mobileDaySelect(n) {
+  S.mobilePlannerDay=n;
+  // Update strip button states
+  document.querySelectorAll('.mds-day').forEach(function(btn){
+    btn.classList.toggle('active',parseInt(btn.dataset.day)===n);
+  });
+  if(window.innerWidth>680) return;
+  // Show only selected day column in grade
+  document.querySelectorAll('#grade-body .g-cell').forEach(function(c){
+    c.style.display=parseInt(c.dataset.day)===n?'':'none';
+  });
+  document.querySelectorAll('.g-allday-row .g-allday-cell').forEach(function(c){
+    c.style.display=parseInt(c.dataset.day)===n?'':'none';
+  });
+  // Scroll selected day pill into view
+  var activeBtn=document.querySelector('.mds-day.active');
+  if(activeBtn) activeBtn.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});
 }
 
 function makeBlk(item, cellKey) {
@@ -2185,6 +2254,18 @@ function formatDate(iso){
     return new Date(iso+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'});
   }catch(e){return iso;}
 }
+
+// ── RESIZE: clear mobile cell hiding when going back to desktop ──────────
+window.addEventListener('resize',function(){
+  if(window.innerWidth>680){
+    document.querySelectorAll('#grade-body .g-cell,.g-allday-row .g-allday-cell').forEach(function(c){
+      c.style.display='';
+    });
+    closeMobileSidebar();
+  } else if(S.page==='planner'){
+    mobileDaySelect(S.mobilePlannerDay!==undefined?S.mobilePlannerDay:0);
+  }
+});
 
 // ── KEYBOARD + CLICK OUTSIDE ──────────────────
 document.addEventListener('keydown',function(e){

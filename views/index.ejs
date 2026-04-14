@@ -69,6 +69,7 @@
     <div class="page active" id="page-planner">
       <div class="planner-layout">
         <div class="planner-center">
+          <div class="mobile-day-strip" id="mobile-day-strip"></div>
           <div id="grade-hdr" class="grade-hdr"></div>
           <div id="grade-body" class="grade-body"></div>
         </div>
@@ -711,5 +712,27 @@ if ('serviceWorker' in navigator) {
     <button class="ai-chat-send" id="ai-chat-send" onclick="sendChatMessage()">↑</button>
   </div>
 </div>
+
+<!-- MOBILE BOTTOM NAV -->
+<nav class="bottom-nav" id="bottom-nav">
+  <button class="bn-item" data-page="planner" onclick="goTo('planner')">
+    <span class="bn-icon">📋</span><span class="bn-lbl">Planner</span>
+  </button>
+  <button class="bn-item" data-page="backlog" onclick="goTo('backlog')">
+    <span class="bn-icon">📦</span><span class="bn-lbl">Backlog</span>
+  </button>
+  <button class="bn-item" data-page="kanban" onclick="goTo('kanban')">
+    <span class="bn-icon">🗂️</span><span class="bn-lbl">Kanban</span>
+  </button>
+  <button class="bn-item" data-page="rotina" onclick="goTo('rotina')">
+    <span class="bn-icon">🔄</span><span class="bn-lbl">Rotina</span>
+  </button>
+  <button class="bn-item bn-more" onclick="toggleMobileSidebar()">
+    <span class="bn-icon">☰</span><span class="bn-lbl">Mais</span>
+  </button>
+</nav>
+
+<!-- MOBILE BACKDROP (sidebar overlay) -->
+<div class="mobile-backdrop" id="mobile-backdrop" onclick="closeMobileSidebar()"></div>
 </body>
 </html>
