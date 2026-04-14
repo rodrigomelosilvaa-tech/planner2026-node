@@ -133,7 +133,17 @@ function setWeekKey() {
 }
 async function prevWeek(){S.weekOffset--;setWeekKey();await loadSemana();renderPlanner();}
 async function nextWeek(){S.weekOffset++;setWeekKey();await loadSemana();renderPlanner();}
-async function goToday(){S.weekOffset=0;setWeekKey();await loadSemana();renderPlanner();}
+async function goToday(){
+  S.weekOffset=0;
+  // Reset mobile day to today (day index within current week)
+  var today=new Date(); today.setHours(0,0,0,0);
+  var wd=getWeekDates();
+  var todayIdx=wd.findIndex(function(d){return d.getTime()===today.getTime();});
+  S.mobilePlannerDay=todayIdx>=0?todayIdx:0;
+  setWeekKey();
+  await loadSemana();
+  renderPlanner();
+}
 async function loadSemana() {
   var r = await Promise.all([
     api('GET','/api/semanas/'+S.weekKey),
