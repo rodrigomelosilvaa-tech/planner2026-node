@@ -621,6 +621,16 @@ async function dropItem(drag,toKey,toTime){
     if(realItem) Object.assign(realItem,patch);
     await api('PUT','/api/backlog/'+item.id,patch);
     buildBLMini();
+  } else if(item._isBacklog){
+    // Backlog item já posicionado no planner — mover para outro dia/horário atualizando data_inicio
+    var toDay2=parseInt(toKey.split('_')[0]);
+    var slotDate2=getWeekDates()[toDay2];
+    var slotISO2=slotDate2?localDateISO(slotDate2):null;
+    var patchBL={horario:toTime,data_inicio:slotISO2};
+    var realBLItem=S.backlog.find(function(b){return b.id===item._rId;});
+    if(realBLItem) Object.assign(realBLItem,patchBL);
+    await api('PUT','/api/backlog/'+item._rId,patchBL);
+    buildBLMini();
   } else if(item._isRotina){
     var rReal=S.rotina.find(function(r){return r.id===item._rId;})||item;
     var copy={titulo:rReal.titulo,categoria_id:rReal.categoria_id,tipo:'unica',
@@ -686,7 +696,7 @@ function renderBLMiniList(wrap){
     return a.prazo?-1:b.prazo?1:0;
   });
   if(!tasks.length){wrap.innerHTML='<div class="pr-empty">Nenhuma tarefa</div>';return;}
-  var uL={h:'Urgente',m:'Esta sem.',l:'Aguardar'};
+  var uL={h:'Urgente',m:'Normal',l:'Baixo'};
   tasks.forEach(function(task){
     var cat=getCat(task.categoria_id), noPrazo=!task.prazo;
     var inPlanner = isScheduled(task);
@@ -944,7 +954,13 @@ function openCardModal(item, source, cellKey, defaultTime, dayIndex) {
   };
 
   setTimeout(function(){autoResize(document.getElementById('cm-title'));},50);
-  S.cardCtx = {item:item, source:source, cellKey:cellKey, defaultTime:defaultTime, dayIndex:dayIndex, isNew:isNew};
+  var oldState = isNew ? null : {
+    titulo: (item&&(item.titulo||item.texto))||'',
+    urgencia: (item&&item.urgencia)||'m',
+    data_inicio: (item&&item.data_inicio)||null,
+    prazo: (item&&(item.prazo||item.data))||null
+  };
+  S.cardCtx = {item:item, source:source, cellKey:cellKey, defaultTime:defaultTime, dayIndex:dayIndex, isNew:isNew, oldState:oldState};
 
   // Mostrar botão "Remover do Planner" apenas para itens existentes agendados (não rotinas)
   var unschedBtn = document.getElementById('cm-unschedule-btn');
@@ -1024,6 +1040,12 @@ function switchCmTab(name,btn){
   document.querySelectorAll('.cm-tab').forEach(function(t){t.classList.remove('active');});
   if(btn) btn.classList.add('active');
   else { var b=document.querySelector('.cm-tab[data-tab="'+name+'"]'); if(b) b.classList.add('active'); }
+  if(name==='historico' && S.cardCtx && S.cardCtx.item && !S.cardCtx.isNew){
+    var hItem=S.cardCtx.item;
+    var hId=hItem.id||hItem._rId||null;
+    var hTipo=S.cardCtx.source||'backlog';
+    if(hId) loadCardHistory(String(hId),hTipo);
+  }
 }
 
 function calcDurMinutes(h1, h2) {
@@ -1067,10 +1089,23 @@ async function saveCardModal(){
       prazo:prazo,data:prazo,horario:horario,horario_fim:horarioFim,descricao:desc,checklist:checklist,dias:dias,
       data_inicio:dataInicio,data_fim:dataFim,kanban_coluna_id:kanbanColId,intervalo_semanas:intervaloSemanas};
 
+  // Capturar mudanças para histórico (somente edições)
+  var _histItemId=null, _histTipo=source;
+  var _histChanges=[];
+  if(!ctx.isNew && ctx.oldState && ctx.item){
+    var _old=ctx.oldState, _itm=ctx.item;
+    _histItemId=_itm.id||_itm._rId||null;
+    var _urgLabels={h:'Urgente',m:'Normal',l:'Baixo'};
+    if(titulo!==_old.titulo) _histChanges.push({acao:'Título alterado',detalhe:'"'+_old.titulo+'" → "'+titulo+'"'});
+    if(urg!==_old.urgencia) _histChanges.push({acao:'Prioridade alterada',detalhe:(_urgLabels[_old.urgencia]||_old.urgencia)+' → '+(_urgLabels[urg]||urg)});
+    if(dataInicio!==_old.data_inicio) _histChanges.push({acao:'Data de início alterada',detalhe:(_old.data_inicio||'—')+' → '+(dataInicio||'—')});
+    if(prazo!==_old.prazo) _histChanges.push({acao:'Prazo alterado',detalhe:(_old.prazo||'—')+' → '+(prazo||'—')});
+  }
+
   if(ctx.isNew){
     if(source==='backlog'){
       var created=await api('POST','/api/backlog',payload);
-      if(created){S.backlog.push(created);renderBacklog();buildBLMini();}
+      if(created){S.backlog.push(created);renderBacklog();buildBLMini();await recordHistory(created.id,'backlog','Criado',titulo);}
     } else if(source==='semana'){
       if(tipo==='rotina'){
         var crR=await api('POST','/api/rotina',Object.assign(payload,{ativo:true}));
@@ -1159,6 +1194,12 @@ async function saveCardModal(){
       if(S.page==='imprevistos') renderImpPg();
     }
     buildGrade(); buildBLMini(); buildRotMini(); buildImpMini();
+    // Gravar histórico de mudanças
+    if(_histItemId && _histChanges.length){
+      for(var _hi=0;_hi<_histChanges.length;_hi++){
+        await recordHistory(_histItemId,_histTipo,_histChanges[_hi].acao,_histChanges[_hi].detalhe);
+      }
+    }
   }
   // Atualizar kanban se visível (etapa pode ter mudado)
   if(S.page==='kanban') renderKanban();
@@ -1338,8 +1379,9 @@ function renderBacklog(){
 
   var tbody=document.getElementById('bl-tbody'); if(!tbody) return;
   tbody.innerHTML='';
-  var uL={h:'🔴',m:'🟡',l:'🟢'};
-  S.backlog.filter(function(t){
+  var uL={h:'🔴 Urgente',m:'🟡 Normal',l:'🟢 Baixo'};
+  var noFilter=!searchQ&&!urgF&&!statusF&&S.blFilter==='all';
+  var filtered=S.backlog.filter(function(t){
     if(S.blFilter==='_np') return !t.prazo;
     if(S.blFilter!=='all'&&String(t.categoria_id)!==String(S.blFilter)) return false;
     if(urgF&&t.urgencia!==urgF) return false;
@@ -1347,13 +1389,16 @@ function renderBacklog(){
     if(statusF==='concluido'&&!t.concluido) return false;
     if(searchQ&&!t.titulo.toLowerCase().includes(searchQ)&&!t.id.toLowerCase().includes(searchQ)) return false;
     return true;
-  }).forEach(function(task){
+  });
+  filtered.forEach(function(task){
     var cat=getCat(task.categoria_id), noPrazo=!task.prazo;
     var inPlanner = isScheduled(task);
     var dateStr=task.prazo?new Date(task.prazo+'T12:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'}):'—';
     var tr=document.createElement('tr');
+    tr.dataset.id=task.id;
     if(task.concluido) tr.classList.add('done-row');
-    tr.innerHTML='<td class="td-check"><div class="chk'+(task.concluido?' done':'')+'">✓</div></td>'
+    tr.innerHTML=(noFilter?'<td class="td-drag" title="Arrastar para reordenar">⠿</td>':'')
+      +'<td class="td-check"><div class="chk'+(task.concluido?' done':'')+'">✓</div></td>'
       +'<td class="td-id">'+task.id+'</td>'
       +'<td class="td-title">'+(task.titulo||'')
         +(inPlanner?'<span class="td-planned-badge" title="Agendado no calendário">📅</span>':'')
@@ -1369,6 +1414,7 @@ function renderBacklog(){
     tr.querySelector('.chk').onclick=async function(){
       task.concluido=!task.concluido;
       await api('PUT','/api/backlog/'+task.id,{concluido:task.concluido});
+      await recordHistory(task.id,'backlog',task.concluido?'Concluído':'Reaberto','');
       renderBacklog(); updateBadges(); buildBLMini();
     };
     tr.querySelector('.td-del').onclick=async function(){
@@ -1377,6 +1423,48 @@ function renderBacklog(){
       S.backlog=S.backlog.filter(function(b){return b.id!==task.id;});
       renderBacklog(); updateBadges(); buildBLMini();
     };
+    // Drag-to-reorder (only when no filter active)
+    if(noFilter){
+      tr.draggable=true;
+      tr.addEventListener('dragstart',function(e){
+        S._blDrag=task.id;
+        tr.classList.add('bl-dragging');
+        e.dataTransfer.effectAllowed='move';
+        e.dataTransfer.setData('bl-reorder','1');
+      });
+      tr.addEventListener('dragend',function(){
+        tr.classList.remove('bl-dragging');
+        document.querySelectorAll('#bl-tbody tr.bl-drag-over').forEach(function(r){r.classList.remove('bl-drag-over');});
+      });
+      tr.addEventListener('dragover',function(e){
+        if(!S._blDrag) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect='move';
+        tbody.querySelectorAll('.bl-drag-over').forEach(function(r){r.classList.remove('bl-drag-over');});
+        if(S._blDrag!==task.id) tr.classList.add('bl-drag-over');
+      });
+      tr.addEventListener('dragleave',function(){tr.classList.remove('bl-drag-over');});
+      tr.addEventListener('drop',async function(e){
+        e.preventDefault();
+        tr.classList.remove('bl-drag-over');
+        var dragId=S._blDrag; S._blDrag=null;
+        if(!dragId||dragId===task.id) return;
+        var draggedItem=S.backlog.find(function(b){return b.id===dragId;});
+        if(!draggedItem) return;
+        // Remove from current position and insert before target
+        S.backlog=S.backlog.filter(function(b){return b.id!==dragId;});
+        var targetIdx=S.backlog.findIndex(function(b){return b.id===task.id;});
+        if(targetIdx<0) S.backlog.push(draggedItem); else S.backlog.splice(targetIdx,0,draggedItem);
+        // Assign new ordems and save
+        var saves=[];
+        S.backlog.forEach(function(b,i){
+          var newO=i*10;
+          if((b.ordem||0)!==newO){b.ordem=newO;saves.push(api('PUT','/api/backlog/'+b.id,{ordem:newO}));}
+        });
+        await Promise.all(saves);
+        renderBacklog();
+      });
+    }
     tbody.appendChild(tr);
   });
   updateBadges();
@@ -1620,7 +1708,7 @@ function renderImpPg(){
   var searchQ=(document.getElementById('imp-search')||{value:''}).value.toLowerCase().trim();
   var statusF=(document.getElementById('imp-status-filter')||{value:''}).value;
   list.innerHTML='';
-  var uL={h:'🔴',m:'🟡',l:'🟢'};
+  var uL={h:'🔴 Urgente',m:'🟡 Normal',l:'🟢 Baixo'};
   var filtered=S.imprevistos.filter(function(imp){
     if(statusF==='aberto'&&imp.resolvido) return false;
     if(statusF==='resolvido'&&!imp.resolvido) return false;
@@ -1790,7 +1878,7 @@ function buildPlanosAcao(planos){
     wrap.innerHTML='<div style="color:var(--text3);font-family:var(--font-m);font-size:10px;padding:12px 0">Nenhum plano de ação ainda.</div>';
     return;
   }
-  var uL={h:'🔴',m:'🟡',l:'🟢'};
+  var uL={h:'🔴 Urgente',m:'🟡 Normal',l:'🟢 Baixo'};
   planos.forEach(function(p){
     var cat=getCat(p.categoria_id||'');
     var el=document.createElement('div'); el.className='plano-item'+(p.concluido?' concluido':'');
@@ -3928,4 +4016,29 @@ async function canvasPlaceEmoji(emoji) {
   var panel = document.getElementById('cvt-emoji-panel');
   if (panel) panel.style.display = 'none';
   canvasSetTool('select');
+}
+
+// ── HISTÓRICO DE ITEMS ────────────────────────
+async function recordHistory(itemId, itemTipo, acao, detalhe) {
+  if(!itemId||!itemTipo||!acao) return;
+  try { await api('POST','/api/historico',{item_id:String(itemId),item_tipo:itemTipo,acao:acao,detalhe:detalhe||''}); }
+  catch(_) {}
+}
+
+async function loadCardHistory(itemId, itemTipo) {
+  var wrap=document.getElementById('cm-historico-list'); if(!wrap) return;
+  wrap.innerHTML='<div class="hist-loading">Carregando...</div>';
+  var rows=await api('GET','/api/historico/'+encodeURIComponent(itemTipo)+'/'+encodeURIComponent(itemId));
+  if(!rows||!rows.length){
+    wrap.innerHTML='<div class="hist-empty">Nenhum histórico registrado.</div>';
+    return;
+  }
+  wrap.innerHTML=rows.map(function(r){
+    var dt=r.criado?new Date(r.criado.replace(' ','T')).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+    return '<div class="hist-item">'
+      +'<div class="hist-acao">'+r.acao+'</div>'
+      +(r.detalhe?'<div class="hist-detalhe">'+r.detalhe+'</div>':'')
+      +'<div class="hist-dt">'+dt+'</div>'
+      +'</div>';
+  }).join('');
 }

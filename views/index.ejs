@@ -121,8 +121,8 @@
           <select class="field-sel search-sel" id="bl-urg-filter" onchange="renderBacklog()">
             <option value="">Urgência</option>
             <option value="h">🔴 Urgente</option>
-            <option value="m">🟡 Esta semana</option>
-            <option value="l">🟢 Aguardar</option>
+            <option value="m">🟡 Normal</option>
+            <option value="l">🟢 Baixo</option>
           </select>
           <select class="field-sel search-sel" id="bl-status-filter" onchange="renderBacklog()">
             <option value="">Status</option>
@@ -204,8 +204,8 @@
           <div class="imp-row">
             <select class="field-sel" id="imp-urg" style="flex:1">
               <option value="h">🔴 Urgente</option>
-              <option value="m" selected>🟡 Esta semana</option>
-              <option value="l">🟢 Pode aguardar</option>
+              <option value="m" selected>🟡 Normal</option>
+              <option value="l">🟢 Baixo</option>
             </select>
             <button class="btn-p" onclick="addImpPg()">+ Adicionar</button>
           </div>
@@ -275,8 +275,8 @@
                 <label class="ml">Urgência</label>
                 <select class="field-sel" id="pf-urg">
                   <option value="h">🔴 Urgente</option>
-                  <option value="m" selected>🟡 Esta semana</option>
-                  <option value="l">🟢 Aguardar</option>
+                  <option value="m" selected>🟡 Normal</option>
+                  <option value="l">🟢 Baixo</option>
                 </select>
               </div>
             </div>
@@ -536,6 +536,7 @@
       <button class="cm-tab"        data-tab="checklist"   onclick="switchCmTab('checklist',this)">Checklist</button>
       <button class="cm-tab"        data-tab="comentarios" onclick="switchCmTab('comentarios',this)">Comentários</button>
       <button class="cm-tab"        data-tab="vinculos"    onclick="switchCmTab('vinculos',this)">Vínculos</button>
+      <button class="cm-tab"        data-tab="historico"   onclick="switchCmTab('historico',this)">Histórico</button>
     </div>
     <div class="cm-body">
       <!-- Detalhes -->
@@ -553,8 +554,8 @@
           <div class="mf"><label class="ml">Urgência</label>
             <select class="field-sel" id="cm-urg">
               <option value="h">🔴 Urgente</option>
-              <option value="m">🟡 Esta semana</option>
-              <option value="l">🟢 Pode aguardar</option>
+              <option value="m">🟡 Normal</option>
+              <option value="l">🟢 Baixo</option>
             </select>
           </div>
           <div class="mf"><label class="ml">Prazo</label><input class="field-in" id="cm-prazo" type="date"></div>
@@ -620,6 +621,10 @@
         <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
           <button class="btn-d" style="font-size:9px;padding:6px 12px" onclick="createImpFromCard()">⚡ Criar imprevisto vinculado</button>
         </div>
+      </div>
+      <!-- Histórico -->
+      <div class="cm-tab-pane" id="cm-pane-historico">
+        <div id="cm-historico-list"></div>
       </div>
     </div>
     <div class="cm-foot">

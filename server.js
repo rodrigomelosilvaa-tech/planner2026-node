@@ -106,6 +106,7 @@ async function createSchema() {
     'ALTER TABLE rotina    ADD COLUMN intervalo_semanas INTEGER DEFAULT 1',
     'ALTER TABLE backlog   ADD COLUMN horario_fim TEXT',
     'ALTER TABLE backlog   ADD COLUMN horario     TEXT',
+    'ALTER TABLE backlog   ADD COLUMN ordem       INTEGER DEFAULT 0',
     'ALTER TABLE imprevisto ADD COLUMN horario_fim TEXT',
     'ALTER TABLE canvas_note ADD COLUMN note_type TEXT NOT NULL DEFAULT \'sticky\'',
     'ALTER TABLE configuracao ADD COLUMN push_sub TEXT',
@@ -251,6 +252,15 @@ async function createSchema() {
       espessura  INTEGER NOT NULL DEFAULT 2,
       texto      TEXT    NOT NULL DEFAULT '',
       criado     TEXT
+    );
+    CREATE TABLE IF NOT EXISTS item_historico (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id   INTEGER NOT NULL REFERENCES user(id),
+      item_id   TEXT    NOT NULL,
+      item_tipo TEXT    NOT NULL,
+      acao      TEXT    NOT NULL,
+      detalhe   TEXT,
+      criado    TEXT
     );
   `);
 }
@@ -456,11 +466,12 @@ app.delete('/api/admin/users/:uid', requireLogin, requireAdmin, async (req, res)
   await dbRun('DELETE FROM semana       WHERE user_id = ?', [uid]);
   await dbRun('DELETE FROM revisao      WHERE user_id = ?', [uid]);
   await dbRun('DELETE FROM counter      WHERE user_id = ?', [uid]);
-  await dbRun('DELETE FROM canvas_note  WHERE user_id = ?', [uid]);
-  await dbRun('DELETE FROM canvas_shape WHERE user_id = ?', [uid]);
-  await dbRun('DELETE FROM canvas_board WHERE user_id = ?', [uid]);
-  await dbRun('DELETE FROM configuracao  WHERE user_id = ?', [uid]);
-  await dbRun('DELETE FROM user         WHERE id = ?',      [uid]);
+  await dbRun('DELETE FROM canvas_note     WHERE user_id = ?', [uid]);
+  await dbRun('DELETE FROM canvas_shape    WHERE user_id = ?', [uid]);
+  await dbRun('DELETE FROM canvas_board    WHERE user_id = ?', [uid]);
+  await dbRun('DELETE FROM item_historico  WHERE user_id = ?', [uid]);
+  await dbRun('DELETE FROM configuracao    WHERE user_id = ?', [uid]);
+  await dbRun('DELETE FROM user            WHERE id = ?',      [uid]);
   res.json({ ok: true });
 });
 
@@ -584,7 +595,7 @@ app.post('/api/rotina/:rid/comentario', requireLogin, async (req, res) => {
 
 // ── BACKLOG ───────────────────────────────────
 app.get('/api/backlog', requireLogin, async (req, res) => {
-  const rows = await dbAll('SELECT * FROM backlog WHERE user_id = ?', [req.session.userId]);
+  const rows = await dbAll('SELECT * FROM backlog WHERE user_id = ? ORDER BY ordem, criado', [req.session.userId]);
   res.json(rows.map(r => rowToObj(r, ['comentarios','checklist','vinculos','dias'])));
 });
 
@@ -628,6 +639,7 @@ app.put('/api/backlog/:bid', requireLogin, async (req, res) => {
     if ('checklist'       in d) sf('checklist',       JSON.stringify(d.checklist));
     if ('vinculos'        in d) sf('vinculos',        JSON.stringify(d.vinculos));
     if ('dias'            in d) sf('dias',            JSON.stringify(d.dias));
+    if ('ordem'          in d) sf('ordem',           Number(d.ordem) || 0);
     if (fields.length) {
       vals.push(req.params.bid, uid);
       await dbRun(`UPDATE backlog SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, vals);
@@ -1070,6 +1082,26 @@ app.put('/api/canvas/shapes/:sid', requireLogin, async (req, res) => {
 
 app.delete('/api/canvas/shapes/:sid', requireLogin, async (req, res) => {
   await dbRun('DELETE FROM canvas_shape WHERE id = ? AND user_id = ?', [req.params.sid, req.session.userId]);
+  res.json({ ok: true });
+});
+
+// ── HISTÓRICO DE ITEMS ────────────────────────
+app.get('/api/historico/:tipo/:id', requireLogin, async (req, res) => {
+  const rows = await dbAll(
+    'SELECT * FROM item_historico WHERE user_id = ? AND item_tipo = ? AND item_id = ? ORDER BY id DESC',
+    [req.session.userId, req.params.tipo, req.params.id]
+  );
+  res.json(rows);
+});
+
+app.post('/api/historico', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  const d = req.body;
+  if (!d.item_id || !d.item_tipo || !d.acao) return res.json({ ok: true });
+  await dbRun(
+    'INSERT INTO item_historico (user_id, item_id, item_tipo, acao, detalhe, criado) VALUES (?,?,?,?,?,?)',
+    [uid, String(d.item_id), d.item_tipo, d.acao, d.detalhe || '', ts()]
+  );
   res.json({ ok: true });
 });
 
