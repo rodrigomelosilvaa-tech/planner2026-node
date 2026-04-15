@@ -626,6 +626,20 @@ function makeBlk(item, cellKey) {
   
   if(alertStyle) div.style.cssText += alertStyle;
 
+  // ── Span visual por duração ──────────────────────────────────────────────
+  // Cada slot de 30 min = 70px (desktop) ou 52px (mobile) + 2px de gap = 72 / 54
+  if(durMins > 30){
+    var slotUnit = window.innerWidth <= 680 ? 54 : 72;
+    var spanH = Math.round((durMins / 30) * slotUnit) - 4;
+    div.classList.add('blk-spanning');
+    div.style.position = 'absolute';
+    div.style.top     = '3px';
+    div.style.left    = '3px';
+    div.style.right   = '3px';
+    div.style.height  = spanH + 'px';
+    div.style.zIndex  = '3';
+  }
+
   div.onclick=function(e){
     if(e.target.classList.contains('blk-act')) return;
     if(item._isRotina){
@@ -644,10 +658,17 @@ function makeBlk(item, cellKey) {
       if(ns) S.rotinaDone[rKey]=ns; else delete S.rotinaDone[rKey];
       item.done=!item.done;
       await api('POST','/api/rotina_done/'+S.weekKey,S.rotinaDone);
-      // Para backlog: marcar concluido ao dar ✓ (remove do planner na próxima renderização)
+      // Para backlog: só auto-conclui se for item de DIA ÚNICO (sem data_fim ou data_fim === data_inicio)
+      // Itens multi-dia permanecem ativos nos demais dias — o usuário conclui manualmente no backlog
       if(item._isBacklog && item.done){
         var blItem=S.backlog.find(function(b){return b.id===item._rId;});
-        if(blItem){blItem.concluido=true;await api('PUT','/api/backlog/'+item._rId,{concluido:true});}
+        if(blItem){
+          var _multiDay=blItem.data_fim && blItem.data_fim!==blItem.data_inicio;
+          if(!_multiDay){
+            blItem.concluido=true;
+            await api('PUT','/api/backlog/'+item._rId,{concluido:true});
+          }
+        }
         buildGrade(); buildBLMini(); updateBadges();
       }
     } else {
