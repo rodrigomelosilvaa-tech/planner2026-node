@@ -109,6 +109,10 @@ async function createSchema() {
     'ALTER TABLE backlog   ADD COLUMN ordem       INTEGER DEFAULT 0',
     'ALTER TABLE imprevisto ADD COLUMN horario_fim TEXT',
     'ALTER TABLE canvas_note ADD COLUMN note_type TEXT NOT NULL DEFAULT \'sticky\'',
+    'ALTER TABLE canvas_note ADD COLUMN parked INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE canvas_note ADD COLUMN card_id TEXT',
+    'ALTER TABLE canvas_board ADD COLUMN icone TEXT',
+    'ALTER TABLE canvas_board ADD COLUMN cor TEXT',
     'ALTER TABLE configuracao ADD COLUMN push_sub TEXT',
     "ALTER TABLE configuracao ADD COLUMN notif_som_tipo TEXT NOT NULL DEFAULT 'sino'",
   ];
@@ -968,13 +972,26 @@ app.get('/api/canvas/boards', requireLogin, async (req, res) => {
 app.post('/api/canvas/boards', requireLogin, async (req, res) => {
   const uid = req.session.userId;
   const titulo = req.body.titulo || 'Novo Board';
-  const info = await dbRun('INSERT INTO canvas_board (user_id, titulo, criado) VALUES (?, ?, ?)', [uid, titulo, todayStr()]);
-  res.status(201).json({ id: info.lastID, titulo, criado: todayStr() });
+  const icone  = req.body.icone  || '🗒️';
+  const cor    = req.body.cor    || null;
+  const info = await dbRun(
+    'INSERT INTO canvas_board (user_id, titulo, icone, cor, criado) VALUES (?, ?, ?, ?, ?)',
+    [uid, titulo, icone, cor, todayStr()]
+  );
+  res.status(201).json({ id: info.lastID, titulo, icone, cor, criado: todayStr() });
 });
 
 app.put('/api/canvas/boards/:bid', requireLogin, async (req, res) => {
   const uid = req.session.userId;
-  await dbRun('UPDATE canvas_board SET titulo = ? WHERE id = ? AND user_id = ?', [req.body.titulo || '', req.params.bid, uid]);
+  const d   = req.body;
+  const fields = [], vals = [];
+  if ('titulo' in d) { fields.push('titulo = ?'); vals.push(d.titulo); }
+  if ('icone'  in d) { fields.push('icone = ?');  vals.push(d.icone); }
+  if ('cor'    in d) { fields.push('cor = ?');     vals.push(d.cor); }
+  if (fields.length) {
+    vals.push(req.params.bid, uid);
+    await dbRun(`UPDATE canvas_board SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, vals);
+  }
   res.json({ ok: true });
 });
 
@@ -1021,11 +1038,49 @@ app.put('/api/canvas/notes/:nid', requireLogin, async (req, res) => {
   if ('altura'    in d) sf('altura',    d.altura);
   if ('cor'       in d) sf('cor',       d.cor);
   if ('note_type' in d) sf('note_type', d.note_type);
+  if ('parked'    in d) sf('parked',    d.parked ? 1 : 0);
+  if ('card_id'   in d) sf('card_id',   d.card_id || null);
   if (fields.length) {
     vals.push(req.params.nid, uid);
     await dbRun(`UPDATE canvas_note SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, vals);
   }
   res.json({ ok: true });
+});
+
+// Notas canvas vinculadas a um card específico
+app.get('/api/canvas/notas-do-card/:cardId', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  const rows = await dbAll(
+    'SELECT n.*, b.titulo as board_titulo, b.icone as board_icone FROM canvas_note n ' +
+    'JOIN canvas_board b ON b.id = n.board_id ' +
+    'WHERE n.user_id = ? AND n.card_id = ?',
+    [uid, req.params.cardId]
+  );
+  res.json(rows);
+});
+
+// Busca de texto no board
+app.get('/api/canvas/boards/:bid/search', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  const q   = (req.query.q || '').toLowerCase();
+  if (!q) return res.json([]);
+  const rows = await dbAll(
+    'SELECT id, note_type, conteudo, pos_x, pos_y FROM canvas_note WHERE board_id = ? AND user_id = ?',
+    [req.params.bid, uid]
+  );
+  const results = rows.filter(r => {
+    const raw = r.conteudo || '';
+    // For card/doc types, strip JSON
+    let text = raw;
+    try {
+      const parsed = JSON.parse(raw);
+      text = Object.values(parsed).filter(v => typeof v === 'string').join(' ');
+    } catch(_) {}
+    // Strip HTML
+    text = text.replace(/<[^>]+>/g, ' ').toLowerCase();
+    return text.includes(q);
+  });
+  res.json(results);
 });
 
 app.delete('/api/canvas/notes/:nid', requireLogin, async (req, res) => {

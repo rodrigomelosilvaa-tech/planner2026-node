@@ -105,8 +105,8 @@ function notifCheck() {
   var todayISO = localDateISO(agora);
   var itens    = [];
 
-  (S.rotina     || []).forEach(function(it) { if (it.horario && it.data_inicio === todayISO) itens.push({ id:'r'+it.id, titulo:it.titulo, horario:it.horario }); });
-  (S.backlog    || []).forEach(function(it) { if (it.horario && it.data_inicio === todayISO) itens.push({ id:'b'+it.id, titulo:it.titulo, horario:it.horario }); });
+  (S.rotina     || []).forEach(function(it) { if (it.horario && (it.data_inicio === todayISO || it.data_fim === todayISO)) itens.push({ id:'r'+it.id, titulo:it.titulo, horario:it.horario }); });
+  (S.backlog    || []).forEach(function(it) { if (it.horario && (it.data_inicio === todayISO || it.prazo === todayISO)) itens.push({ id:'b'+it.id, titulo:it.titulo, horario:it.horario }); });
   (S.imprevistos|| []).forEach(function(it) { if (it.horario && it.data_inicio === todayISO) itens.push({ id:'i'+it.id, titulo:it.titulo, horario:it.horario }); });
 
   itens.forEach(function(it) {
@@ -124,6 +124,51 @@ function notifCheck() {
     var minFalta = Math.round(diff / 60000);
     var msg = minFalta <= 1 ? 'Agora: ' + it.titulo : 'Em ' + minFalta + ' min: ' + it.titulo;
     notifDisparar(it.titulo, msg);
+  });
+
+  // ── Alertas por data_fim / prazo ──────────────
+  // Regra: se tiver data_fim E estiver no planner → alerta por data_fim (prioridade)
+  //        se não tiver data_fim → usa prazo como fallback
+  // O alerta dispara uma vez por dia quando a data de vencimento é hoje
+  var todasListas = [
+    { lista: S.rotina      || [], prefixo: 'rd' },
+    { lista: S.backlog     || [], prefixo: 'bd' },
+    { lista: S.imprevistos || [], prefixo: 'id' }
+  ];
+
+  todasListas.forEach(function(grupo) {
+    grupo.lista.forEach(function(it) {
+      if (it.concluido || it.resolvido) return;
+
+      var dataAlerta = null;
+      var tipoAlerta = null;
+
+      var noPlanner = !!(it.horario && it.data_inicio);
+
+      if (it.data_fim && it.data_fim.length >= 10 && noPlanner) {
+        // Prioridade 1: data_fim, somente se estiver no planner
+        dataAlerta = it.data_fim;
+        tipoAlerta = 'data_fim';
+      } else if (!it.data_fim && (it.prazo || it.data)) {
+        // Prioridade 2: prazo (sem necessidade de estar no planner)
+        dataAlerta = it.prazo || it.data;
+        tipoAlerta = 'prazo';
+      }
+
+      if (!dataAlerta || dataAlerta.length < 10) return;
+
+      // Só alerta se a data de vencimento for hoje
+      if (dataAlerta !== todayISO) return;
+
+      var key = grupo.prefixo + it.id + '_' + dataAlerta;
+      if (_notifFired[key]) return;
+      _notifFired[key] = Date.now();
+
+      var titulo = it.titulo || it.texto || 'Item sem título';
+      var label  = tipoAlerta === 'data_fim' ? 'Encerra hoje' : 'Prazo hoje';
+      var msg    = label + ': ' + titulo;
+      notifDisparar('⏰ ' + label, msg);
+    });
   });
 
   // Limpar entradas antigas

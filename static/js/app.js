@@ -133,7 +133,7 @@ function setWeekKey() {
 }
 async function prevWeek(){S.weekOffset--;setWeekKey();await loadSemana();renderPlanner();}
 async function nextWeek(){S.weekOffset++;setWeekKey();await loadSemana();renderPlanner();}
-async function goToday(){S.weekOffset=0;setWeekKey();await loadSemana();renderPlanner();}
+async function goToday(){S.weekOffset=0;S.mobilePlannerDay=undefined;setWeekKey();await loadSemana();renderPlanner();}
 async function loadSemana() {
   var r = await Promise.all([
     api('GET','/api/semanas/'+S.weekKey),
@@ -368,7 +368,7 @@ function makeAlldayItem(it, source, dayIdx) {
 }
 
 function buildGrade() {
-  var dates=getWeekDates(), todayD=new Date(); todayD.setHours(0,0,0,0);
+  var dates=getWeekDates(), todayD=new Date(); todayD.setHours(12,0,0,0);
   var hdr=document.getElementById('grade-hdr'); if(!hdr) return;
   hdr.innerHTML='<div class="gh-empty"></div>';
   dates.forEach(function(d,i){
@@ -1467,7 +1467,7 @@ function renderBacklog(){
     var tr=document.createElement('tr');
     tr.dataset.id=task.id;
     if(task.concluido) tr.classList.add('done-row');
-    tr.innerHTML=(noFilter?'<td class="td-drag" title="Arrastar para reordenar">⠿</td>':'')
+    tr.innerHTML='<td class="td-drag" title="Arrastar para reordenar">'+(noFilter?'⠿':'')+'</td>'
       +'<td class="td-check"><div class="chk'+(task.concluido?' done':'')+'">✓</div></td>'
       +'<td class="td-id">'+task.id+'</td>'
       +'<td class="td-title">'+(task.titulo||'')
@@ -2692,6 +2692,10 @@ async function renderCanvas() {
   canvasRenderAll();
   canvasApplyZoom();
   canvasBindSurfaceEvents();
+  canvasUpdateParkingBadge();
+  // Close parking panel when switching boards
+  var pp = document.getElementById('cv-parking-panel');
+  if (pp) pp.classList.remove('cv-park-open');
 }
 
 function canvasRenderAll() {
@@ -2775,6 +2779,10 @@ function canvasHideActionBars() {
 
 // ── Sticky Note ──────────────────────────────
 function canvasMakeNote(note) {
+  var isDoc = (note.note_type === 'doc');
+  if (note.note_type === 'card') return canvasMakeCard(note);
+  if (isDoc) return canvasMakeDoc(note);
+
   var el = document.createElement('div');
   el.className = 'canvas-note';
   el.dataset.nid = note.id;
@@ -2783,62 +2791,503 @@ function canvasMakeNote(note) {
   el.style.width      = (note.largura || 220)  + 'px';
   el.style.height     = (note.altura  || 160)  + 'px';
   el.style.background = note.cor || CANVAS_NOTE_COLORS[0];
+  if (note.parked) el.classList.add('cn-is-parked');
 
   var colorBtns = CANVAS_NOTE_COLORS.map(function(c) {
     return '<button class="cn-color-btn' + (note.cor===c?' active':'') + '" style="background:' + c + '" data-c="' + c
       + '" onclick="canvasChangeColor(' + note.id + ',\'' + c + '\')" title="' + c + '"></button>';
   }).join('');
 
+  var linkBadge = '';
+  if (note.card_id) {
+    linkBadge = '<div class="cn-link-badge" title="Vinculado ao card ' + note.card_id + '" onclick="swal(\'Card: ' + note.card_id + '\')">&#128279;</div>';
+  }
+
   el.innerHTML =
     '<div class="cn-header">'
       + '<div class="cn-drag-handle" title="Arrastar"><svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" opacity=".45"><circle cx="3" cy="2" r="1.2"/><circle cx="7" cy="2" r="1.2"/><circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/><circle cx="3" cy="12" r="1.2"/><circle cx="7" cy="12" r="1.2"/></svg></div>'
       + '<div class="cn-color-btns">' + colorBtns + '</div>'
-      + '<button class="cn-del" onclick="canvasDeleteNote(' + note.id + ')" title="Excluir">×</button>'
+      + linkBadge
+      + '<button class="cn-del" title="Excluir (Del)">×</button>'
+      + '<div class="cn-parked-dot" title="Neste Board (veio do Parking Lot)"></div>'
     + '</div>'
-    + '<div class="cn-body" contenteditable="true" spellcheck="false" data-placeholder="Escreva aqui...">'
-      + (note.conteudo || '')
-    + '</div>'
-    + '<div class="cn-resize-hint">↘</div>';
-
-  var handle = el.querySelector('.cn-drag-handle');
-  canvasBindDrag(el, handle, note, 'note');
-  canvasBindResize(el, note, 'note');
+    + '<div class="cn-body" contenteditable="true" spellcheck="false" data-placeholder="Digite sua nota aqui...">' + (note.conteudo || '') + '</div>'
+    + '<div class="cn-resize-hint">⇲</div>';
 
   var body = el.querySelector('.cn-body');
-  body.addEventListener('focus', function() {
-    canvasDeselectAll();
-    canvasShowFmt(true);
-    el.classList.add('cn-editing');
-  });
-  body.addEventListener('blur', function() {
-    el.classList.remove('cn-editing');
-    canvasSaveNoteContent(note.id, body.innerHTML);
-  });
-  canvasBindFmtKeys(body);
+  var delBtn = el.querySelector('.cn-del');
 
-  el.addEventListener('contextmenu', function(e) {
-    e.preventDefault();
-    canvasShowNoteCtxMenu(e.clientX, e.clientY, note, el);
+  body.addEventListener('keyup', function(e) { if (S.canvasSelectedEl && S.canvasSelectedEl.el === el) e.stopPropagation(); });
+  body.addEventListener('blur', function() {
+    var nc = body.innerHTML;
+    if (nc !== note.conteudo) { note.conteudo = nc; api('PUT', '/api/canvas/notes/' + note.id, { conteudo: nc }); }
   });
+  body.addEventListener('focus', function() { canvasShowFmtBar(); });
+
+  delBtn.addEventListener('click', function(e) { e.stopPropagation(); canvasDeleteNote(note.id); });
+
+  canvasBindDrag(el, el.querySelector('.cn-header'), note, 'note');
+  canvasBindResize(el, note, 'note');
 
   el.addEventListener('mousedown', function(e) {
+    if (e.target.closest('.cn-color-btn') || e.target === delBtn || e.target.closest('.cn-link-badge')) return;
     if (e.button !== 0) return;
     canvasDeselectAll();
     el.classList.add('cn-selected');
     S.canvasSelectedEl = { el: el, note: note, type: 'note' };
+    
+    var act = [
+      { icon: '&#128279;', label: 'Vincular a Card', action: function(){ canvasLinkToCard(note); }, badge:true },
+      { icon: '&#10064;', label: 'Duplicar', action: function(){ canvasDuplicateNote(note); } },
+      { icon: '&#8593;', label: 'Frente',   action: function(){ canvasBringFront(el); } },
+      { icon: '&#8595;', label: 'Atrás',    action: function(){ canvasSendBack(el); } },
+      { icon: '&#10060;', label: 'Excluir', danger: true, action: function(){ canvasDeleteNote(note.id); } }
+    ];
+    canvasShowActionBar(el, act);
   });
-
+  
+  el.addEventListener('contextmenu', function(e) {
+    if (e.target === body) return;
+    e.preventDefault();
+    canvasShowNoteCtxMenu(e.clientX, e.clientY, note, el);
+  });
+  
   return el;
 }
 
+// ── NEW TYPES (Doc, Card) ───────────────────────────
+function canvasMakeDoc(note) {
+  var el = document.createElement('div');
+  el.className = 'cv-doc-note';
+  el.dataset.nid = note.id;
+  el.style.left   = (note.pos_x   || 80)  + 'px';
+  el.style.top    = (note.pos_y   || 80)  + 'px';
+  el.style.width  = (note.largura || 320)  + 'px';
+  el.style.height = (note.altura  || 240)  + 'px';
+  
+  var parsed = { title: '', text: '', tags: [] };
+  try { parsed = JSON.parse(note.conteudo || '{}'); } catch(e){}
+  
+  var badge = note.card_id ? '<div class="cvdn-link-badge" title="Vinculado ao card ' + note.card_id + '">&#128279;</div>' : '';
+
+  el.innerHTML =
+    '<div class="cvdn-topbar">'
+      + '<div class="cvdn-icon">&#128196;</div>'
+      + '<div class="cvdn-title" contenteditable="true" spellcheck="false">' + (parsed.title || '') + '</div>'
+      + badge
+      + '<button class="cvdn-del" title="Excluir">×</button>'
+    + '</div>'
+    + '<div class="cvdn-body" contenteditable="true" spellcheck="false">' + (parsed.text || '') + '</div>'
+    + '<div class="cvdn-footer">'
+      + (parsed.tags.length ? parsed.tags.map(t => '<span class="cvdn-tag">'+t+'</span>').join('') : '<span class="cvdn-tag">+ Add Tag</span>')
+      + '<span class="cvdn-wcount">Doc</span>'
+    + '</div>';
+
+  var tb = el.querySelector('.cvdn-topbar');
+  var bTitle = el.querySelector('.cvdn-title');
+  var bBody = el.querySelector('.cvdn-body');
+  var delBtn = el.querySelector('.cvdn-del');
+
+  function save() {
+    parsed.title = bTitle.innerText;
+    parsed.text = bBody.innerHTML;
+    var nc = JSON.stringify(parsed);
+    if (nc !== note.conteudo) { note.conteudo = nc; api('PUT', '/api/canvas/notes/' + note.id, { conteudo: nc }); }
+  }
+  bTitle.addEventListener('blur', save);
+  bBody.addEventListener('blur', save);
+  
+  [bTitle, bBody].forEach(e => e.addEventListener('keyup', function(ev) { if (S.canvasSelectedEl && S.canvasSelectedEl.el === el) ev.stopPropagation(); }));
+
+  delBtn.addEventListener('click', function(e) { e.stopPropagation(); canvasDeleteNote(note.id); });
+
+  canvasBindDrag(el, tb, note, 'note');
+  canvasBindResize(el, note, 'note');
+
+  el.addEventListener('mousedown', function(e) {
+    if (e.target === bTitle || e.target === bBody || e.target === delBtn || e.target.closest('.cvdn-tag') || e.target.closest('.cvdn-link-badge')) return;
+    if (e.button !== 0) return;
+    canvasDeselectAll();
+    el.classList.add('cn-selected');
+    S.canvasSelectedEl = { el: el, note: note, type: 'note' };
+    
+    var act = [
+      { icon: '&#128279;', label: 'Vincular a Card', action: function(){ canvasLinkToCard(note); } },
+      { icon: '&#10064;', label: 'Duplicar', action: function(){ canvasDuplicateNote(note); } },
+      { icon: '&#8593;', label: 'Frente',   action: function(){ canvasBringFront(el); } },
+      { icon: '&#8595;', label: 'Atrás',    action: function(){ canvasSendBack(el); } },
+      { icon: '&#10060;', label: 'Excluir', danger: true, action: function(){ canvasDeleteNote(note.id); } }
+    ];
+    canvasShowActionBar(el, act);
+  });
+  
+  return el;
+}
+
+function canvasMakeCard(note) {
+  var el = document.createElement('div');
+  el.className = 'canvas-note cn-card';
+  el.dataset.nid = note.id;
+  el.style.left   = (note.pos_x   || 80)  + 'px';
+  el.style.top    = (note.pos_y   || 80)  + 'px';
+  el.style.width  = (note.largura || 260)  + 'px';
+  el.style.height = (note.altura  || 140)  + 'px';
+  
+  var parsed = { tag: 'CARD', header: '', body: '', footer: '' };
+  try { parsed = JSON.parse(note.conteudo || '{}'); } catch(e){}
+
+  el.innerHTML =
+    '<div class="cn-card-top-bar">'
+      + '<div class="cn-drag-handle" title="Arrastar"><svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" opacity=".45"><circle cx="3" cy="2" r="1.2"/><circle cx="7" cy="2" r="1.2"/><circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/><circle cx="3" cy="12" r="1.2"/><circle cx="7" cy="12" r="1.2"/></svg></div>'
+      + '<div class="cn-card-label-tag" contenteditable="true" spellcheck="false">' + (parsed.tag || '') + '</div>'
+      + '<button class="cn-del" title="Excluir">×</button>'
+    + '</div>'
+    + '<div class="cn-card-header" contenteditable="true" spellcheck="false" data-placeholder="Tít. do Card">' + (parsed.header || '') + '</div>'
+    + '<div class="cn-card-body" contenteditable="true" spellcheck="false" data-placeholder="Conteúdo do card...">' + (parsed.body || '') + '</div>'
+    + '<div class="cn-card-footer" contenteditable="true" spellcheck="false" data-placeholder="Rodapé (data, dono)">' + (parsed.footer || '') + '</div>';
+
+  var topBar = el.querySelector('.cn-card-top-bar');
+  var bTag = el.querySelector('.cn-card-label-tag');
+  var bHead = el.querySelector('.cn-card-header');
+  var bBody = el.querySelector('.cn-card-body');
+  var bFoot = el.querySelector('.cn-card-footer');
+  var delBtn = el.querySelector('.cn-del');
+
+  function save() {
+    parsed.tag = bTag.innerText; parsed.header = bHead.innerHTML; parsed.body = bBody.innerHTML; parsed.footer = bFoot.innerHTML;
+    var nc = JSON.stringify(parsed);
+    if (nc !== note.conteudo) { note.conteudo = nc; api('PUT', '/api/canvas/notes/' + note.id, { conteudo: nc }); }
+  }
+  [bTag, bHead, bBody, bFoot].forEach(e => {
+    e.addEventListener('blur', save);
+    e.addEventListener('keyup', function(ev) { if (S.canvasSelectedEl && S.canvasSelectedEl.el === el) ev.stopPropagation(); });
+  });
+
+  delBtn.addEventListener('click', function(e) { e.stopPropagation(); canvasDeleteNote(note.id); });
+
+  canvasBindDrag(el, topBar, note, 'note');
+  canvasBindResize(el, note, 'note');
+
+  el.addEventListener('mousedown', function(e) {
+    if (e.target === bTag || e.target === bHead || e.target === bBody || e.target === bFoot || e.target === delBtn) return;
+    canvasDeselectAll();
+    el.classList.add('cn-selected');
+    S.canvasSelectedEl = { el: el, note: note, type: 'note' };
+  });
+  
+  return el;
+}
+
+// ── NEW CANVAS FEATURES ─────────────────────────────────
+function canvasFitAll() {
+  if (!S.canvasCurrentBoard) return;
+  var surface = document.getElementById('canvas-surface');
+  var wrap = document.getElementById('canvas-surface-wrap');
+  var els = Array.from(surface.children).filter(function(c) {
+    return c.tagName !== 'SVG' && c.id !== 'canvas-empty' && c.style.display !== 'none';
+  });
+  if (els.length === 0) return;
+  var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  els.forEach(function(e) {
+    var l = parseFloat(e.style.left) || 0;
+    var t = parseFloat(e.style.top) || 0;
+    var w = parseFloat(e.style.width) || e.offsetWidth;
+    var h = parseFloat(e.style.height) || e.offsetHeight;
+    if (l < minX) minX = l;
+    if (t < minY) minY = t;
+    if (l+w > maxX) maxX = l+w;
+    if (t+h > maxY) maxY = t+h;
+  });
+  if (minX === Infinity) return;
+  var pad = 40;
+  var vw = wrap.clientWidth;
+  var vh = wrap.clientHeight;
+  var ew = (maxX - minX) + pad*2;
+  var eh = (maxY - minY) + pad*2;
+  var zoom = Math.min(vw/ew, vh/eh, 3);
+  S.canvasZoom = Math.max(0.15, zoom);
+  canvasApplyZoom();
+  wrap.scrollLeft = ((minX - pad) * S.canvasZoom);
+  wrap.scrollTop  = ((minY - pad) * S.canvasZoom);
+}
+
+function canvasToggleBgPicker() {
+  var p = document.getElementById('cv-bg-panel');
+  p.style.display = p.style.display === 'none' ? 'block' : 'none';
+}
+function canvasSetBg(bg) {
+  var p = document.getElementById('canvas-surface-wrap');
+  p.className = 'canvas-surface-wrap cv-bg-' + bg;
+  document.querySelectorAll('.cv-bg-opt').forEach(function(el){ el.classList.remove('active'); });
+  document.querySelector('.cv-bg-opt[data-bg="'+bg+'"]').classList.add('active');
+}
+
+function canvasSearchNotes(q) {
+  var res = document.getElementById('cv-search-results');
+  if (!q || q.length < 2 || !S.canvasCurrentBoard) { res.classList.remove('open'); return; }
+  
+  api('GET', '/api/canvas/boards/' + S.canvasCurrentBoard.id + '/search?q=' + encodeURIComponent(q)).then(function(data) {
+    if (!data.length) {
+      res.innerHTML = '<div class="cv-link-empty">Nenhuma nota encontrada.</div>';
+    } else {
+      res.innerHTML = data.map(function(d) {
+        var t = d.conteudo || '';
+        try { t = JSON.parse(d.conteudo).text || JSON.parse(d.conteudo).title || t; } catch(e){}
+        t = t.replace(/<[^>]+>/g, '').substring(0, 40) + '...';
+        return '<div class="cv-search-result-item" onclick="canvasGotoNote('+d.id+')">'
+             + '<span class="cvsr-type">' + (d.note_type==='doc'?'&#128196;':'&#128221;') + '</span>'
+             + '<span class="cvsr-text">' + t.replace(new RegExp(q,'gi'), function(m){ return '<mark>'+m+'</mark>'; }) + '</span>'
+             + '</div>';
+      }).join('');
+    }
+    res.classList.add('open');
+  });
+}
+
+function canvasGotoNote(nid) {
+  var el = document.querySelector('[data-nid="'+nid+'"]');
+  if (!el) return;
+  canvasDeselectAll();
+  el.classList.add('cn-selected');
+  S.canvasSelectedEl = { el: el, note: S.canvasNotes.find(function(m){return m.id===nid}), type: 'note' };
+  
+  var wrap = document.getElementById('canvas-surface-wrap');
+  var l = parseFloat(el.style.left) || 0;
+  var t = parseFloat(el.style.top) || 0;
+  wrap.scrollLeft = (l * S.canvasZoom) - (wrap.clientWidth/2) + 100;
+  wrap.scrollTop  = (t * S.canvasZoom) - (wrap.clientHeight/2) + 50;
+  
+  document.getElementById('cv-search-results').classList.remove('open');
+}
+
+var CANVAS_TEMPLATES = [
+  { id: 't1', icon: '&#128221;', name: 'Nota Rápida', desc: 'Sticky note simples' },
+  { id: 't2', icon: '&#128196;', name: 'Documentação', desc: 'Nota estruturada longa' },
+  { id: 't3', icon: '&#128203;', name: 'Método / SOP', desc: 'Passo a passo rotina' },
+  { id: 't4', icon: '&#128269;', name: 'Análise', desc: 'Problema, Causa, Ação' }
+];
+
+function canvasToggleTemplates() {
+  document.querySelectorAll('.cvt-panel').forEach(function(p){ 
+    if (p.id !== 'cvt-templates-panel') p.style.display = 'none'; 
+  });
+  var panel = document.getElementById('cvt-templates-panel');
+  if (panel.style.display === 'block') { panel.style.display = 'none'; return; }
+  
+  var list = document.getElementById('cvt-templates-list');
+  list.innerHTML = CANVAS_TEMPLATES.map(function(t) {
+    return '<div class="cvt-template-item" onclick="canvasUseTemplate(\''+t.id+'\')">'
+      + '<div class="cvt-tm-icon">' + t.icon + '</div>'
+      + '<div class="cvt-tm-info"><div class="cvt-tm-name">'+t.name+'</div><div class="cvt-tm-desc">'+t.desc+'</div></div>'
+    + '</div>';
+  }).join('');
+  
+  var btn = document.querySelector('.cvt-btn[data-tool="templates"]');
+  var r = btn.getBoundingClientRect();
+  panel.style.display = 'block';
+  var ph = panel.offsetHeight;
+  var maxTop = window.innerHeight - ph - 10;
+  panel.style.top = Math.max(10, Math.min(r.top, maxTop)) + 'px';
+  panel.style.left = (r.right + 10) + 'px';
+}
+
+function canvasUseTemplate(tid) {
+  if (!S.canvasCurrentBoard) return;
+  canvasToggleTemplates();
+  
+  var d = {
+    pos_x: document.getElementById('canvas-surface-wrap').scrollLeft/S.canvasZoom + 50,
+    pos_y: document.getElementById('canvas-surface-wrap').scrollTop/S.canvasZoom + 50
+  };
+  
+  if (tid === 't1') {
+    d.note_type = 'sticky'; d.conteudo = 'Nota nova...';
+  } else if (tid === 't2') {
+    d.note_type = 'doc'; d.largura = 400; d.altura = 350;
+    d.conteudo = JSON.stringify({ title: 'Nova Documentação', text: '<h2>Visão Geral</h2><p>Escreva aqui...</p>', tags: ['DOC'] });
+  } else if (tid === 't3') {
+    d.note_type = 'doc'; d.largura = 350; d.altura = 400;
+    d.conteudo = JSON.stringify({ title: 'Procedimento / SOP', text: '<ol><li>Primeiro passo</li><li>Segundo passo</li></ol>', tags: ['SOP'] });
+  } else if (tid === 't4') {
+    d.note_type = 'card'; d.largura = 300; d.altura = 250;
+    d.conteudo = JSON.stringify({ tag: 'ANÁLISE', header: 'Nome da Análise', body: '<b>Problema:</b><br/><b>Causa:</b><br/><b>Ação:</b>', footer: new Date().toLocaleDateString() });
+  }
+  
+  api('POST', '/api/canvas/boards/' + S.canvasCurrentBoard.id + '/notes', d).then(function(note) {
+    S.canvasNotes.push(note);
+    var el;
+    if (note.note_type === 'doc') el = canvasMakeDoc(note);
+    else if (note.note_type === 'card') el = canvasMakeCard(note);
+    else el = canvasMakeNote(note);
+    document.getElementById('canvas-surface').appendChild(el);
+  });
+}
+
+// ── LINK CARD MODAL ──────────────────────────────────
+function canvasLinkToCard(note) {
+  var overlay = document.createElement('div');
+  overlay.className = 'cv-link-modal-overlay';
+  overlay.innerHTML =
+    '<div class="cv-link-modal">'
+      + '<div class="cv-link-modal-head">'
+        + '<h3>Vincular a um Card</h3>'
+        + '<button onclick="this.closest(\\\'.cv-link-modal-overlay\\\').remove()">&times;</button>'
+      + '</div>'
+      + '<div class="cv-link-modal-body">'
+        + '<input type="text" class="cv-link-search-input" id="cv-link-input" placeholder="Buscar titulo ou ID do card...">'
+        + '<div class="cv-link-results" id="cv-link-list"></div>'
+      + '</div>'
+    + '</div>';
+  document.body.appendChild(overlay);
+  var input = document.getElementById('cv-link-input');
+  var list = document.getElementById('cv-link-list');
+  input.focus();
+  
+  var doSearch = debounce(function() {
+    var q = input.value;
+    if (q.length < 2) return;
+    api('GET', '/api/cards/search?q=' + encodeURIComponent(q)).then(function(res) {
+      if (!res.length) { list.innerHTML = '<div class="cv-link-empty">Nenhum card encontrado</div>'; return; }
+      list.innerHTML = res.map(function(r) {
+        return '<div class="cv-link-result" onclick="canvasSaveCardLink('+note.id+', \''+r.id+'\')">'
+          + '<span class="cv-lr-tipo '+r.tipo+'">' + r.tipo + '</span>'
+          + '<span class="cv-lr-id">' + r.id + '</span>'
+          + '<span class="cv-lr-title">' + r.titulo + '</span>'
+        + '</div>';
+      }).join('');
+    });
+  }, 300);
+  input.addEventListener('input', doSearch);
+}
+window.canvasSaveCardLink = function(nid, cid) {
+  var m = document.querySelector('.cv-link-modal-overlay');
+  if(m) m.remove();
+  var note = S.canvasNotes.find(function(n){ return n.id===parseFloat(nid); });
+  if (note) {
+    note.card_id = cid;
+    api('PUT', '/api/canvas/notes/' + nid, { card_id: cid });
+    toast('Nota vinculada ao card ' + cid);
+    var el = document.querySelector('[data-nid="'+nid+'"]');
+    if (el) {
+      var head = el.querySelector('.cn-header') || el;
+      if (!head.querySelector('.cn-link-badge')) head.innerHTML += ' <span class="cn-link-badge" title="Vinculado">&#128279;</span>';
+    }
+  }
+};
+
+
 function canvasShowNoteCtxMenu(cx, cy, note, el) {
+  var parkLabel = note.parked ? '↩ Remover do Parking Lot' : '🅿 Adicionar ao Parking Lot';
   canvasShowCtxMenu(cx, cy, [
     { icon: '⧉', label: 'Duplicar', action: function(){ canvasDuplicateNote(note); } },
     { icon: '↑', label: 'Trazer à frente', action: function(){ canvasBringFront(el, note, 'note'); } },
     { icon: '↓', label: 'Enviar atrás', action: function(){ canvasSendBack(el, note, 'note'); } },
     '-',
+    { icon: '🅿', label: parkLabel, action: function(){ canvasToggleParking(note, el); } },
+    '-',
     { icon: '🗑', label: 'Excluir', danger: true, action: function(){ canvasDeleteNote(note.id); } }
   ]);
+}
+
+// ── Parking Lot ───────────────────────────────
+function canvasToggleParking(note, el) {
+  note.parked = note.parked ? 0 : 1;
+  api('PUT', '/api/canvas/notes/' + note.id, { parked: note.parked });
+  if (el) el.classList.toggle('cn-is-parked', !!note.parked);
+  canvasUpdateParkingBadge();
+  // If panel is open, re-render it
+  var panel = document.getElementById('cv-parking-panel');
+  if (panel && panel.classList.contains('cv-park-open')) canvasRenderParkingPanel();
+}
+
+function canvasUpdateParkingBadge() {
+  var badge = document.getElementById('cv-parking-badge');
+  if (!badge) return;
+  var count = S.canvasNotes.filter(function(n){ return n.parked; }).length;
+  badge.textContent = count;
+  badge.classList.toggle('visible', count > 0);
+}
+
+function canvasToggleParkingPanel() {
+  var panel = document.getElementById('cv-parking-panel');
+  if (!panel) return;
+  var isOpen = panel.classList.toggle('cv-park-open');
+  if (isOpen) canvasRenderParkingPanel();
+}
+
+function canvasRenderParkingPanel() {
+  var body = document.getElementById('cv-park-body');
+  if (!body) return;
+  var parked = S.canvasNotes.filter(function(n){ return n.parked; });
+
+  if (!parked.length) {
+    body.innerHTML =
+      '<div class="cv-park-empty">'
+      + '<div style="font-size:42px;margin-bottom:10px">📋</div>'
+      + '<p style="margin:0;font-size:13px;color:#8888aa">Nenhuma nota no Parking Lot</p>'
+      + '<p style="margin:8px 0 0;font-size:11px;color:#33335a">Clique direito em qualquer nota<br>e escolha "🅿 Adicionar ao Parking Lot"</p>'
+      + '</div>';
+    return;
+  }
+
+  body.innerHTML = '';
+  parked.forEach(function(note) {
+    var card = document.createElement('div');
+    card.className = 'cv-park-card';
+    card.style.background = note.cor || '#fde68a';
+
+    // Strip HTML for text preview
+    var tmp = document.createElement('div');
+    var rawContent = note.conteudo || '';
+    // For card-type notes, extract header
+    if (note.note_type === 'card') {
+      try {
+        var sec = JSON.parse(rawContent);
+        rawContent = (sec.header || '') + ' ' + (sec.body || '');
+      } catch(e) {}
+    }
+    tmp.innerHTML = rawContent;
+    var txt = (tmp.innerText || tmp.textContent || '').trim().slice(0, 120) || '(sem texto)';
+
+    card.innerHTML =
+      '<div class="cv-park-card-bar">'
+        + '<div class="cv-park-card-dot"></div>'
+        + '<div class="cv-park-card-dot"></div>'
+        + '<div class="cv-park-card-dot"></div>'
+      + '</div>'
+      + '<div class="cv-park-card-body">' + escapeHtml(txt) + '</div>'
+      + '<div class="cv-park-card-actions">'
+        + '<button class="cv-park-goto">↗ IR AO QUADRO</button>'
+        + '<button class="cv-park-unpark" title="Remover do Parking">✕</button>'
+      + '</div>';
+
+    card.querySelector('.cv-park-goto').addEventListener('click', function(e) {
+      e.stopPropagation();
+      canvasToggleParkingPanel(); // close panel
+      // Scroll/highlight the note on canvas
+      var noteEl = document.querySelector('[data-nid="' + note.id + '"]');
+      if (noteEl) {
+        noteEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        noteEl.classList.add('cn-selected');
+        S.canvasSelectedEl = { el: noteEl, note: note, type: 'note' };
+        noteEl.style.transition = 'outline .1s';
+        noteEl.style.outline = '3px solid #a78bfa';
+        setTimeout(function(){ noteEl.style.outline = ''; }, 1400);
+      }
+    });
+
+    card.querySelector('.cv-park-unpark').addEventListener('click', function(e) {
+      e.stopPropagation();
+      var noteEl = document.querySelector('[data-nid="' + note.id + '"]');
+      canvasToggleParking(note, noteEl);
+    });
+
+    body.appendChild(card);
+  });
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 // ── Custom Card ──────────────────────────────
@@ -2847,6 +3296,7 @@ function canvasMakeCard(note) {
   try { sections = JSON.parse(note.conteudo || '{}'); } catch(e) {}
   var el = document.createElement('div');
   el.className = 'canvas-note cn-card';
+  if (note.parked) el.classList.add('cn-is-parked');
   el.dataset.nid = note.id;
   el.style.left    = (note.pos_x   || 80)  + 'px';
   el.style.top     = (note.pos_y   || 80)  + 'px';
@@ -2857,6 +3307,7 @@ function canvasMakeCard(note) {
     '<div class="cn-card-top-bar">'
       + '<div class="cn-drag-handle"><svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" opacity=".4"><circle cx="3" cy="2" r="1.2"/><circle cx="7" cy="2" r="1.2"/><circle cx="3" cy="7" r="1.2"/><circle cx="7" cy="7" r="1.2"/><circle cx="3" cy="12" r="1.2"/><circle cx="7" cy="12" r="1.2"/></svg></div>'
       + '<span class="cn-card-label-tag">CARTÃO</span>'
+      + '<div class="cn-parked-dot" title="No Parking Lot" style="margin-right:4px"></div>'
       + '<button class="cn-del" onclick="canvasDeleteNote(' + note.id + ')" title="Excluir">×</button>'
     + '</div>'
     + '<div class="cn-card-header cn-ce" contenteditable="true" data-section="header" spellcheck="false" data-placeholder="Título do cartão...">'
@@ -3041,7 +3492,7 @@ function canvasMakeDiamondSvg(w, h, fundo, borda, esp) {
 
 // ── Selection & Deselect ──────────────────────
 function canvasDeselectAll() {
-  document.querySelectorAll('.cs-shape.cs-selected, .canvas-note.cn-selected').forEach(function(e){
+  document.querySelectorAll('.cs-selected, .cn-selected').forEach(function(e){
     e.classList.remove('cs-selected','cn-selected');
   });
   canvasHideActionBars();
@@ -3211,7 +3662,7 @@ function canvasBindSurfaceEvents() {
     if (tool === 'select' || tool === 'pan') return;
     // Only start drag when clicking the surface itself or the pen SVG
     var tgt = e.target;
-    if (tgt !== surface && tgt.id !== 'canvas-pen-svg' && !tgt.closest || (tgt.closest && tgt.closest('.canvas-note,.cs-shape,.cv-frame,.cv-table,.cv-comment,.cv-emoji-sticker'))) return;
+    if (tgt !== surface && tgt.id !== 'canvas-pen-svg' && (!tgt.closest || tgt.closest('.canvas-note,.cv-doc-note,.cs-shape,.cv-frame,.cv-table,.cv-comment,.cv-emoji-sticker'))) return;
 
     if (tool === 'pen') {
       var sr = surface.getBoundingClientRect();
@@ -3270,13 +3721,14 @@ async function canvasAddAtPosition(x, y) {
   if (!S.canvasCurrentBoard) return;
   var tool = S.canvasTool;
   if      (tool === 'note')    await canvasAddNoteAt(x, y, 'sticky');
+  else if (tool === 'doc')     await canvasAddNoteAt(x, y, 'doc');
   else if (tool === 'card')    await canvasAddNoteAt(x, y, 'card');
   else if (tool === 'table')   await canvasAddNoteAt(x, y, 'table');
   else if (tool === 'text')    await canvasAddShapeAt(x, y, 'text');
   else if (tool === 'shape')   await canvasAddShapeAt(x, y, S.canvasShapeSubTool || 'rect');
   else if (tool === 'frame')   await canvasAddShapeAt(x, y, 'frame');
   else if (tool === 'comment') await canvasAddShapeAt(x, y, 'comment');
-  else if (['rect','circle','diamond','arrow','line','triangle'].indexOf(tool) >= 0)
+  else if (['rect','circle','diamond','arrow','line','triangle','frame'].indexOf(tool) >= 0)
     await canvasAddShapeAt(x, y, tool);
   canvasSetTool('select');
 }
@@ -3285,6 +3737,7 @@ async function canvasAddAtPositionSized(x, y, w, h) {
   if (!S.canvasCurrentBoard) return;
   var tool = S.canvasTool;
   if      (tool === 'note')  await canvasAddNoteAtSized(x, y, w, h, 'sticky');
+  else if (tool === 'doc')   await canvasAddNoteAtSized(x, y, w, h, 'doc');
   else if (tool === 'card')  await canvasAddNoteAtSized(x, y, w, h, 'card');
   else if (tool === 'table') await canvasAddNoteAtSized(x, y, w, h, 'table');
   else if (tool === 'frame') await canvasAddShapeAtSized(x, y, w, h, 'frame');
@@ -3406,7 +3859,7 @@ async function canvasAddNoteAtSized(x, y, w, h, noteType) {
 async function canvasDeleteNote(nid) {
   await api('DELETE', '/api/canvas/notes/' + nid);
   S.canvasNotes = S.canvasNotes.filter(function(n){ return n.id !== nid; });
-  var el = document.querySelector('.canvas-note[data-nid="' + nid + '"]');
+  var el = document.querySelector('[data-nid="' + nid + '"]');
   if (el) { el.style.transform = 'scale(0.8)'; el.style.opacity = '0'; el.style.transition = 'all .18s'; setTimeout(function(){ el.remove(); }, 180); }
 }
 
@@ -3420,7 +3873,7 @@ async function canvasChangeColor(nid, cor) {
   var note = S.canvasNotes.find(function(n){ return n.id === nid; });
   if (!note) return;
   note.cor = cor;
-  var noteEl = document.querySelector('.canvas-note[data-nid="' + nid + '"]');
+  var noteEl = document.querySelector('[data-nid="' + nid + '"]');
   if (noteEl) {
     noteEl.style.background = cor;
     noteEl.querySelectorAll('.cn-color-btn').forEach(function(b){
@@ -3493,7 +3946,7 @@ async function canvasAddShapeAtSized(x, y, w, h, tipo) {
 async function canvasDeleteShapeConfirm(sid) {
   await api('DELETE', '/api/canvas/shapes/' + sid);
   S.canvasShapes = S.canvasShapes.filter(function(s){ return s.id !== sid; });
-  var el = document.querySelector('.cs-shape[data-sid="' + sid + '"]');
+  var el = document.querySelector('[data-sid="' + sid + '"]');
   if (el) { el.style.transform = 'scale(0.8)'; el.style.opacity = '0'; el.style.transition = 'all .18s'; setTimeout(function(){ el.remove(); }, 180); }
 }
 
@@ -3531,6 +3984,7 @@ function canvasBindFmtKeys(el) {
     if (e.key === 'b') { e.preventDefault(); document.execCommand('bold'); }
     if (e.key === 'i') { e.preventDefault(); document.execCommand('italic'); }
     if (e.key === 'u') { e.preventDefault(); document.execCommand('underline'); }
+    if (e.key === 'k') { e.preventDefault(); canvasFmtLink(); }
   });
 }
 
@@ -3555,6 +4009,27 @@ function canvasFmtFont(family) {
 function canvasFmtColor(color) { document.execCommand('foreColor', false, color); }
 function canvasFmtBg(color)    { document.execCommand('hiliteColor', false, color); }
 
+function canvasFmtLink() {
+  var sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+    var text = prompt('Texto do link (nome exibido):');
+    if (!text) return;
+    var url = prompt('Cole a URL do link:');
+    if (!url) return;
+    if (!url.match(/^https?:\/\//i)) url = 'http://' + url;
+    document.execCommand('insertHTML', false, '<a href="' + url + '" target="_blank">' + text + '</a>');
+  } else {
+    var url = prompt('Cole a URL para o texto selecionado:');
+    if (url) {
+      if (!url.match(/^https?:\/\//i)) url = 'http://' + url;
+      document.execCommand('createLink', false, url);
+      setTimeout(function() {
+         var links = document.querySelectorAll('.cn-body a, .cvdn-body a, .cn-card-body a, .cv-tbl td a');
+         links.forEach(function(l){ l.target = '_blank'; });
+      }, 50);
+    }
+  }
+}
 function canvasPlaceCursorEnd(el) {
   var range = document.createRange();
   range.selectNodeContents(el);
@@ -4020,7 +4495,9 @@ function canvasToggleShapeSub() {
     var btn = document.getElementById('cvt-shape-btn');
     if (btn) {
       var r = btn.getBoundingClientRect();
-      panel.style.top  = r.top + 'px';
+      var ph = panel.offsetHeight;
+      var maxTop = window.innerHeight - ph - 10;
+      panel.style.top = Math.max(10, Math.min(r.top, maxTop)) + 'px';
       panel.style.left = (r.right + 6) + 'px';
     }
     document.querySelectorAll('.cvt-btn').forEach(function(b){
@@ -4071,7 +4548,9 @@ function canvasToggleEmojiPicker() {
     var btn = document.querySelector('.cvt-btn[data-tool="emoji"]');
     if (btn) {
       var r = btn.getBoundingClientRect();
-      panel.style.top  = r.top + 'px';
+      var ph = panel.offsetHeight;
+      var maxTop = window.innerHeight - ph - 10;
+      panel.style.top = Math.max(10, Math.min(r.top, maxTop)) + 'px';
       panel.style.left = (r.right + 6) + 'px';
     }
   }
