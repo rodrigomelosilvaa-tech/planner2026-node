@@ -138,7 +138,7 @@ body{font-family:var(--font-b);background:var(--bg);color:var(--text);display:fl
 .grade-body{display:grid;grid-template-columns:60px repeat(7,minmax(0,1fr));gap:2px;padding:2px 12px 12px}
 .g-time{width:60px;font-family:var(--font-m);font-size:8px;color:var(--text3);text-align:right;padding:5px 6px 0;line-height:1.2}
 .g-cell{background:var(--bg3);border:1px solid var(--border);border-radius:2px;min-height:70px;
-  padding:3px;transition:border-color .15s,background .2s;position:relative;overflow:visible}
+  padding:3px;transition:border-color .15s,background .2s}
 .g-cell.is-today{border-color:rgba(201,168,76,.18)}
 .g-cell.drag-over{border-color:var(--gold)!important;background:rgba(201,168,76,.08)}
 .g-cell-add{opacity:0;transition:opacity .15s;padding:2px}
@@ -187,10 +187,6 @@ html[data-theme="light"] .blk-tag{background:rgba(0,0,0,.08)}
 .blk-act.a-done:hover{background:var(--green)}
 .blk-act.a-del:hover{background:var(--red)}
 html[data-theme="light"] .blk-act{background:rgba(0,0,0,.12);color:rgba(0,0,0,.6)}
-/* Bloco que ocupa múltiplos quadrantes de horário */
-.blk-spanning{margin-bottom:0;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.25)!important}
-.blk-spanning .blk-meta{white-space:normal;margin-top:5px}
-.blk-spanning .blk-t{white-space:normal;overflow:visible}
 .blk-removed{border-radius:3px;padding:3px 7px;margin-bottom:2px;border-left:3px dashed rgba(255,255,255,.15);
   background:rgba(255,255,255,.04);opacity:.5;cursor:pointer;transition:opacity .15s}
 .blk-removed:hover{opacity:1;border-left-color:var(--gold)}

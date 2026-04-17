@@ -626,20 +626,6 @@ function makeBlk(item, cellKey) {
   
   if(alertStyle) div.style.cssText += alertStyle;
 
-  // ── Span visual por duração ──────────────────────────────────────────────
-  // Cada slot de 30 min = 70px (desktop) ou 52px (mobile) + 2px de gap = 72 / 54
-  if(durMins > 30){
-    var slotUnit = window.innerWidth <= 680 ? 54 : 72;
-    var spanH = Math.round((durMins / 30) * slotUnit) - 4;
-    div.classList.add('blk-spanning');
-    div.style.position = 'absolute';
-    div.style.top     = '3px';
-    div.style.left    = '3px';
-    div.style.right   = '3px';
-    div.style.height  = spanH + 'px';
-    div.style.zIndex  = '3';
-  }
-
   div.onclick=function(e){
     if(e.target.classList.contains('blk-act')) return;
     if(item._isRotina){
