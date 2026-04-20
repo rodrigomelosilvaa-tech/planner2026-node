@@ -115,6 +115,7 @@ async function createSchema() {
     'ALTER TABLE canvas_board ADD COLUMN cor TEXT',
     'ALTER TABLE configuracao ADD COLUMN push_sub TEXT',
     "ALTER TABLE configuracao ADD COLUMN notif_som_tipo TEXT NOT NULL DEFAULT 'sino'",
+    "ALTER TABLE semana ADD COLUMN rotina_overrides TEXT DEFAULT '{}'",
   ];
   for (const stmt of alterStmts) {
     try { await dbRun(stmt, []); } catch(_) { /* column already exists */ }
@@ -582,6 +583,13 @@ app.delete('/api/rotina/:rid', requireLogin, async (req, res) => {
       keys.forEach(k => delete rd[k]);
       await dbRun('UPDATE semana SET rotina_done = ? WHERE id = ?', [JSON.stringify(rd), s.id]);
     }
+    // Cascade: limpar overrides desta rotina
+    const ovs     = parseJ(s.rotina_overrides || '{}', {});
+    const ovsKeys = Object.keys(ovs).filter(k => k.startsWith(rid + '_'));
+    if (ovsKeys.length) {
+      ovsKeys.forEach(k => delete ovs[k]);
+      await dbRun('UPDATE semana SET rotina_overrides = ? WHERE id = ?', [JSON.stringify(ovs), s.id]);
+    }
   }
   res.json({ ok: true });
 });
@@ -770,6 +778,32 @@ app.post('/api/rotina_done_bulk', requireLogin, async (req, res) => {
     result[wk] = s ? parseJ(s.rotina_done, {}) : {};
   }
   res.json(result);
+});
+
+// ── ROTINA OVERRIDES ──────────────────────────
+app.get('/api/semanas/:wk/overrides', requireLogin, async (req, res) => {
+  const s = await getSemanaObj(req.session.userId, req.params.wk);
+  res.json(parseJ(s.rotina_overrides || '{}', {}));
+});
+
+app.post('/api/semanas/:wk/override', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  const s   = await getSemanaObj(uid, req.params.wk);
+  const ovs = parseJ(s.rotina_overrides || '{}', {});
+  const { key, fields } = req.body;
+  if (!key || !fields) return res.status(400).json({ error: 'key and fields required' });
+  ovs[key] = Object.assign(ovs[key] || {}, fields);
+  await dbRun('UPDATE semana SET rotina_overrides = ? WHERE id = ?', [JSON.stringify(ovs), s.id]);
+  res.json({ ok: true, key, fields: ovs[key] });
+});
+
+app.delete('/api/semanas/:wk/override/:key', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  const s   = await getSemanaObj(uid, req.params.wk);
+  const ovs = parseJ(s.rotina_overrides || '{}', {});
+  delete ovs[req.params.key];
+  await dbRun('UPDATE semana SET rotina_overrides = ? WHERE id = ?', [JSON.stringify(ovs), s.id]);
+  res.json({ ok: true });
 });
 
 app.get('/api/semanas/items/by-date/:dt', requireLogin, async (req, res) => {

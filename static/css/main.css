@@ -1564,6 +1564,10 @@ html[data-theme="light"] .blk-removed{border-left-color:rgba(0,0,0,.15);backgrou
 .cv-lr-title { font-size: 12.5px; color: var(--text2); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cv-link-empty { text-align: center; padding: 20px; font-family: var(--font-m); font-size: 11px; color: var(--text3); }
 
+/* ── Rotina Overrides ────────────────────────── */
+.blk.has-override { border-left-style: dashed; }
+.blk-override-tag { font-size: 8px; opacity: 0.75; cursor: help; }
+
 /* ── Mobile Overrides ────────────────────────── */
 @media(max-width:680px) {
   .canvas-surface-wrap { -webkit-overflow-scrolling: touch; }

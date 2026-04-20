@@ -13,7 +13,11 @@
       "Bash(node --check \"c:/Projetos/GIT/plannerNodev2/planner2026-node/static/js/app.js\")",
       "Bash(node --check \"c:/Projetos/GIT/plannerNodev2/planner2026-node/server.js\")",
       "Bash(node --check static/js/app.js)",
-      "Bash(grep -v \"^[[:space:]]*//\")"
+      "Bash(grep -v \"^[[:space:]]*//\")",
+      "Bash(wc -l /c/Projetos/GIT/plannerNodev2/planner2026-node/*.js /c/Projetos/GIT/plannerNodev2/planner2026-node/static/js/*.js /c/Projetos/GIT/plannerNodev2/planner2026-node/ai/*.js /c/Projetos/GIT/plannerNodev2/planner2026-node/views/*.ejs)",
+      "Bash(node -e \"const fs=require\\('fs'\\); try{ new Function\\(fs.readFileSync\\('static/js/app.js','utf8'\\)\\); console.log\\('OK - sem erros de sintaxe'\\); } catch\\(e\\){ console.error\\('ERRO:', e.message\\); }\")",
+      "Bash(node -e \"const fs=require\\('fs'\\); try{ new Function\\(fs.readFileSync\\('static/js/app.js','utf8'\\)\\); console.log\\('app.js OK'\\); } catch\\(e\\){ console.error\\('ERRO app.js:', e.message\\); }\")",
+      "Bash(node -e \"require\\('./server.js'\\)\")"
     ]
   }
 }

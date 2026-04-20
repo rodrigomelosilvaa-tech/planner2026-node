@@ -22,7 +22,7 @@
     <div class="sb-link active" data-page="planner" onclick="goTo('planner')"><span class="sb-icon">📋</span><span class="sb-lbl">Planner Semanal</span></div>
     <div class="sb-link" data-page="calendario" onclick="goTo('calendario')"><span class="sb-icon">📅</span><span class="sb-lbl">Calendário</span></div>
     <div class="sb-link" data-page="kanban" onclick="goTo('kanban')"><span class="sb-icon">🗂️</span><span class="sb-lbl">Quadro Kanban</span></div>
-    <div class="sb-link" data-page="backlog" onclick="goTo('backlog')"><span class="sb-icon">📌</span><span class="sb-lbl">Backlog</span><span class="sb-badge" id="bdg-bl"></span></div>
+    <div class="sb-link" data-page="backlog" onclick="goTo('backlog')"><span class="sb-icon">☑️</span><span class="sb-lbl">To Do</span><span class="sb-badge" id="bdg-bl"></span></div>
     <div class="sb-link" data-page="rotina" onclick="goTo('rotina')"><span class="sb-icon">🔄</span><span class="sb-lbl">Rotina</span></div>
     <div class="sb-link" data-page="categorias" onclick="goTo('categorias')"><span class="sb-icon">🏷️</span><span class="sb-lbl">Categorias</span></div>
     <div class="sb-link" data-page="imprevistos" onclick="goTo('imprevistos')"><span class="sb-icon">⚡</span><span class="sb-lbl">Imprevistos</span><span class="sb-badge red" id="bdg-imp"></span></div>
@@ -76,7 +76,7 @@
         <div class="planner-right" id="planner-right">
           <div class="pr-tabs">
             <button class="pr-collapse-btn" id="pr-collapse-btn" onclick="toggleRightSidebar()" title="Recolher painel">«</button>
-            <button class="pr-tab active" onclick="switchPrTab('bl',this)"    title="Backlog">📌</button>
+            <button class="pr-tab active" onclick="switchPrTab('bl',this)"    title="To Do">☑️</button>
             <button class="pr-tab"        onclick="switchPrTab('rot',this)"   title="Rotina">🔄</button>
             <button class="pr-tab"        onclick="switchPrTab('imp',this)"   title="Imprevistos">⚡</button>
             <button class="pr-tab"        onclick="switchPrTab('stats',this)" title="Progresso">📊</button>
@@ -114,11 +114,11 @@
       </div>
     </div>
 
-    <!-- BACKLOG -->
+    <!-- TO DO -->
     <div class="page" id="page-backlog">
       <div class="page-inner">
         <div class="page-search-bar">
-          <input class="search-input" id="bl-search" type="text" placeholder="🔍  Buscar no backlog..." oninput="renderBacklog()">
+          <input class="search-input" id="bl-search" type="text" placeholder="🔍  Buscar em To Do..." oninput="renderBacklog()">
           <select class="field-sel search-sel" id="bl-urg-filter" onchange="renderBacklog()">
             <option value="">Urgência</option>
             <option value="h">🔴 Urgente</option>
@@ -285,7 +285,7 @@
             <div style="display:flex;gap:8px;margin-top:8px">
               <button class="btn-p" style="flex:1" onclick="salvarPlano()">Salvar Plano</button>
               <button class="btn-g" onclick="fecharNovoPlano()">Cancelar</button>
-              <button class="btn-d" style="font-size:10px" onclick="promoverParaBacklog()" title="Criar no backlog também">📌 Promover p/ Backlog</button>
+              <button class="btn-d" style="font-size:10px" onclick="promoverParaBacklog()" title="Criar no To Do também">☑️ Promover p/ To Do</button>
             </div>
           </div>
         </div>
@@ -687,6 +687,14 @@
       <div class="cm-tab-pane" id="cm-pane-vinculos">
         <div id="cm-vinculos-list"></div>
         <div style="margin-top:10px;position:relative">
+          <label class="ml">Tipo de dependência</label>
+          <select class="field-sel" id="cm-dep-tipo" style="width:100%;margin-bottom:8px">
+            <option value="relacionado">🔗 Relacionado</option>
+            <option value="antecede">⏩ Antecede (este habilita o outro)</option>
+            <option value="sucede">⏪ Sucede (depende do outro)</option>
+            <option value="bloqueia">🚫 Bloqueia (este bloqueia o outro)</option>
+            <option value="bloqueado_por">⛔ Bloqueado por (o outro bloqueia este)</option>
+          </select>
           <label class="ml">Vincular card</label>
           <input class="field-in" id="cm-vinc-search" placeholder="Busque por ID ou título..." autocomplete="off"
             oninput="searchCards(this.value)">
@@ -701,11 +709,8 @@
         <div id="cm-historico-list"></div>
       </div>
     </div>
-    <div class="cm-foot">
-      <button class="btn-p" onclick="saveCardModal()">💾 Salvar</button>
-      <button class="btn-g" onclick="closeCardModal()">Cancelar</button>
-      <button class="btn-d cm-unschedule-btn" id="cm-unschedule-btn" onclick="unscheduleCard()" title="Remove datas e horário — item volta ao backlog sem agendamento" style="display:none">📤 Remover do Planner</button>
-      <div style="margin-left:auto;font-family:var(--font-m);font-size:9px;color:var(--text3)" id="cm-saved-msg"></div>
+    <div class="cm-foot" id="cm-foot">
+      <!-- gerado dinamicamente por openCardModal() -->
     </div>
   </div>
 </div>
@@ -774,7 +779,7 @@ if ('serviceWorker' in navigator) {
   </div>
   <div class="ai-chat-messages" id="ai-chat-messages">
     <div class="ai-msg ai-msg-assistant">
-      <span class="ai-msg-text">Olá! Posso criar rotinas, adicionar itens ao planner, gerenciar o backlog e responder sobre sua agenda. Como posso ajudar?</span>
+      <span class="ai-msg-text">Olá! Posso criar rotinas, adicionar itens ao planner, gerenciar o To Do e responder sobre sua agenda. Como posso ajudar?</span>
     </div>
   </div>
   <div class="ai-chat-input-area">
@@ -792,7 +797,7 @@ if ('serviceWorker' in navigator) {
     <span class="bn-icon">📋</span><span class="bn-lbl">Planner</span>
   </button>
   <button class="bn-item" data-page="backlog" onclick="goTo('backlog')">
-    <span class="bn-icon">📦</span><span class="bn-lbl">Backlog</span>
+    <span class="bn-icon">☑️</span><span class="bn-lbl">To Do</span>
   </button>
   <button class="bn-item" data-page="kanban" onclick="goTo('kanban')">
     <span class="bn-icon">🗂️</span><span class="bn-lbl">Kanban</span>

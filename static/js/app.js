@@ -5,7 +5,7 @@ var S = {
   dragging: false,
   page: 'planner', weekOffset: 0, calMonth: new Date(),
   categorias: [], rotina: [], backlog: [], imprevistos: [],
-  semana: {}, rotinaDone: {},
+  semana: {}, rotinaDone: {}, rotinaOverrides: {},
   calBulkDone: {}, // rotinaDone por semana para o calendário
   blFilter: 'all', blWeekOnly: false,
   revisao: {}, drag: null, weekKey: '',
@@ -137,9 +137,12 @@ async function goToday(){S.weekOffset=0;S.mobilePlannerDay=undefined;setWeekKey(
 async function loadSemana() {
   var r = await Promise.all([
     api('GET','/api/semanas/'+S.weekKey),
-    api('GET','/api/rotina_done/'+S.weekKey)
+    api('GET','/api/rotina_done/'+S.weekKey),
+    api('GET','/api/semanas/'+S.weekKey+'/overrides')
   ]);
-  S.semana = r[0]||{}; S.rotinaDone = r[1]||{};
+  S.semana          = r[0]||{};
+  S.rotinaDone      = r[1]||{};
+  S.rotinaOverrides = r[2]||{};
 }
 
 // ── ROTINA DATE FILTER ─────────────────────────
@@ -187,13 +190,7 @@ function itemAtivoNoSlot(it, dayIndex, weekMonday) {
     if (it.data_inicio && it.data_inicio.length >= 10) {
       return slotISO === it.data_inicio;
     }
-    // Sem data_inicio: usa prazo como âncora e aplica regra "vencido → hoje"
-    var anchor = it.prazo || it.data;
-    if (anchor) {
-      var todayISO = localDateISO();
-      if (anchor < todayISO) return slotISO === todayISO;
-      return anchor === slotISO;
-    }
+    // prazo é apenas indicador de alerta — nunca determina onde o item aparece no planner
   }
 
   return false;
@@ -228,7 +225,7 @@ function goTo(page) {
   document.querySelectorAll('.bn-item[data-page]').forEach(function(b){
     b.classList.toggle('active', b.dataset.page===page);
   });
-  var labels = {planner:'Planner Semanal',calendario:'Calendário',kanban:'Quadro Kanban',backlog:'Backlog',
+  var labels = {planner:'Planner Semanal',calendario:'Calendário',kanban:'Quadro Kanban',backlog:'To Do',
     rotina:'Rotina',categorias:'Categorias',imprevistos:'Imprevistos',revisao:'Revisão Semanal',
     canvas:'Notas / Canvas',configuracoes:'Configurações'};
   var ctx = document.getElementById('tb-ctx');
@@ -464,11 +461,15 @@ function buildGrade() {
       cell.dataset.key=key;
       cell.dataset.day=d;
 
-      // Rotinas recorrentes
+      // Rotinas recorrentes (com suporte a overrides de horário)
       S.rotina.filter(function(it){
-        return findSlot(it.horario)===time && itemAtivoNoSlot(it, d, S.weekKey);
+        var ovk = it.id+'_'+d;
+        var ov  = S.rotinaOverrides[ovk]||{};
+        var efHorario = ov.horario || it.horario;
+        return findSlot(efHorario)===time && itemAtivoNoSlot(it, d, S.weekKey);
       }).sort(function(a, b) {
-        var ha = a.horario || '00:00', hb = b.horario || '00:00';
+        var ovA = S.rotinaOverrides[a.id+'_'+d]||{}, ovB = S.rotinaOverrides[b.id+'_'+d]||{};
+        var ha = ovA.horario||a.horario||'00:00', hb = ovB.horario||b.horario||'00:00';
         return ha < hb ? -1 : ha > hb ? 1 : 0;
       }).forEach(function(it){
         var rdKey = it.id+'_'+d;
@@ -488,9 +489,12 @@ function buildGrade() {
           cell.appendChild(chip);
           return;
         }
-        cell.appendChild(makeBlk(Object.assign({}, it, {
+        var ov = S.rotinaOverrides[rdKey]||{};
+        var hasOv = Object.keys(ov).length > 0;
+        cell.appendChild(makeBlk(Object.assign({}, it, ov, {
           id:rdKey, done:state==='done'||it.concluido,
-          _isRotina:true, _rId:it.id, _day:d
+          _isRotina:true, _rId:it.id, _day:d,
+          _hasOverride:hasOv, _overrideFields:ov
         }), key));
       });
 
@@ -572,19 +576,53 @@ function mobileDaySelect(n) {
   if(activeBtn) activeBtn.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});
 }
 
+function findLinkedItem(id, tipo){
+  if(!tipo||tipo==='backlog'||tipo==='todo') return S.backlog.find(function(b){return b.id===id;});
+  if(tipo==='imprevisto') return S.imprevistos.find(function(i){return i.id===id;});
+  if(tipo==='rotina') return S.rotina.find(function(r){return r.id===id;});
+  return null;
+}
+function isLinkedItemComplete(item, tipo){
+  if(!item) return false;
+  if(tipo==='imprevisto') return !!item.resolvido;
+  return !!item.concluido;
+}
+function getDepAlerts(vinculos){
+  var r={blocked:false,blockedBy:[],sucede:false,sucedeItems:[],hasAntecede:false};
+  (vinculos||[]).forEach(function(v){
+    var dep=v.dep||'relacionado';
+    if(dep==='bloqueado_por'){
+      var li=findLinkedItem(v.id,v.tipo);
+      if(!isLinkedItemComplete(li,v.tipo)){r.blocked=true;r.blockedBy.push(v);}
+    } else if(dep==='sucede'){
+      var li2=findLinkedItem(v.id,v.tipo);
+      if(!isLinkedItemComplete(li2,v.tipo)){r.sucede=true;r.sucedeItems.push(v);}
+    } else if(dep==='antecede'||dep==='relacionado'||dep==='bloqueia'){
+      r.hasAntecede=true;
+    }
+  });
+  return r;
+}
+
 function makeBlk(item, cellKey) {
   var div=document.createElement('div');
   var color=catColor(item.categoria_id);
-  div.className='blk'+(item.done?' is-done':'')+' draggable-blk';
+  div.className='blk'+(item.done?' is-done':'')+' draggable-blk'+(item._hasOverride?' has-override':'');
   div.style.background=color+'1a';
   div.style.borderLeftColor=color;
   var cl=item.checklist||[]; var clDone=cl.filter(function(x){return x.done;}).length;
   var clBadge=cl.length?('<span class="blk-icons"> ☑ '+clDone+'/'+cl.length+'</span>'):'';
   var commBadge=(item.comentarios&&item.comentarios.length)?('<span class="blk-icons"> 💬'+item.comentarios.length+'</span>'):'';
-  var vincBadge=(item.vinculos&&item.vinculos.length)?('<span class="blk-icons"> 🔗'+item.vinculos.length+'</span>'):'';
+  var depA=getDepAlerts(item.vinculos);
+  var vincBadge='';
+  if(item.vinculos&&item.vinculos.length){
+    if(depA.blocked) vincBadge='<span class="blk-icons" style="color:#e74c3c" title="Bloqueado por dependência pendente">⛔'+item.vinculos.length+'</span>';
+    else if(depA.sucede) vincBadge='<span class="blk-icons" style="color:var(--amber)" title="Tem dependência pendente (sucede)">⚠️'+item.vinculos.length+'</span>';
+    else vincBadge='<span class="blk-icons"> 🔗'+item.vinculos.length+'</span>';
+  }
   var typeTag = '';
   if (item._isBacklog) {
-    typeTag = '<span class="blk-tag" style="background:rgba(46,204,113,.15);color:#2ecc71" title="Backlog Agendado">📦 Backlog</span>';
+    typeTag = '<span class="blk-tag" style="background:rgba(46,204,113,.15);color:#2ecc71" title="To Do Agendado">☑️ To Do</span>';
   } else if (item.tipo === 'rotina' || item._isRotina) {
     typeTag = '<span class="blk-tag" style="background:rgba(52,152,219,.2);color:#3498db" title="Rotina Replicada">🔄 Rotina</span>';
   } else {
@@ -612,25 +650,45 @@ function makeBlk(item, cellKey) {
   var durMins = (item.horario && item.horario_fim) ? calcDurMinutes(item.horario, item.horario_fim) : 0;
   var durTag = durMins > 0 ? '<span class="blk-dur">'+formatDur(durMins)+'</span>' : '';
   var horarioTag = item.horario ? '<span class="blk-horario">'+item.horario+(item.horario_fim?'–'+item.horario_fim:'')+'</span>' : '';
+
+  // Dependency alert tags
+  var depTag='';
+  if(!item.done){
+    if(depA.blocked){
+      var bNames=depA.blockedBy.map(function(v){return v.id;}).join(', ');
+      depTag='<span class="blk-tag" style="background:rgba(231,76,60,.15);color:#e74c3c;font-weight:600" title="Bloqueado por: '+bNames+'. Conclua o item dependente antes.">⛔ Bloqueado</span>';
+      if(!alertStyle) alertStyle='border-left:3px solid #e74c3c !important;background:rgba(231,76,60,.08) !important;';
+    } else if(depA.sucede){
+      var sNames=depA.sucedeItems.map(function(v){return v.id;}).join(', ');
+      depTag='<span class="blk-tag" style="background:rgba(243,156,18,.12);color:var(--amber)" title="Sucede: '+sNames+'. Item anterior ainda pendente — risco de dependência.">⚠️ Dep. pendente</span>';
+    } else if(depA.hasAntecede){
+      depTag='<span class="blk-tag" style="background:rgba(52,152,219,.1);color:#3498db;opacity:.8" title="Habilita ou está relacionado a outros itens">⏩ Habilitador</span>';
+    }
+  }
+
+  var overrideTag = item._hasOverride
+    ? '<span class="blk-tag blk-override-tag" title="Horário ajustado só para este dia">✏️</span>'
+    : '';
+
   div.innerHTML='<div class="blk-t">'+(item.titulo||item.texto)+'</div>'
     +'<div class="blk-meta">'
     +horarioTag+durTag
     +'<span class="blk-id">'+(item._isRotina?item._rId:item.id)+'</span>'
     +'<span class="blk-tag">'+catIcon(item.categoria_id)+'</span>'
-    +typeTag+deadlineTag+clBadge+commBadge+vincBadge
+    +typeTag+overrideTag+deadlineTag+depTag+clBadge+commBadge+vincBadge
     +'</div>'
     +'<div class="blk-acts">'
     +'<button class="blk-act a-done" title="Concluir">✓</button>'
     +'<button class="blk-act a-del" title="Remover">✕</button>'
     +'</div>';
-  
+
   if(alertStyle) div.style.cssText += alertStyle;
 
   div.onclick=function(e){
     if(e.target.classList.contains('blk-act')) return;
     if(item._isRotina){
-      var real = S.rotina.find(function(r){return r.id===item._rId;}) || S.backlog.find(function(b){return b.id===item._rId;});
-      openCardModal(real||item, item.tipo==='rotina'?'rotina':'backlog', cellKey, null);
+      // Passa o blkItem com _day e _hasOverride preservados
+      openCardModal(item, 'rotina_blk', cellKey, null);
     } else {
       openCardModal(item, 'semana', cellKey, null);
     }
@@ -708,13 +766,13 @@ async function dropItem(drag,toKey,toTime){
     if(realBLItem) Object.assign(realBLItem,patchBL);
     await api('PUT','/api/backlog/'+item._rId,patchBL);
     buildBLMini();
-  } else if(item._isRotina){
-    var rReal=S.rotina.find(function(r){return r.id===item._rId;})||item;
-    var copy={titulo:rReal.titulo,categoria_id:rReal.categoria_id,tipo:'unica',
-      horario:toTime,done:false,descricao:rReal.descricao||'',
-      comentarios:[],checklist:[],vinculos:[]};
-    var cr=await api('POST','/api/semanas/'+S.weekKey+'/item',{cell_key:toKey,item:copy});
-    if(cr){S.semana[toKey]=S.semana[toKey]||[];S.semana[toKey].push(cr);buildGrade();}
+  } else if(item._isRotina && !item._isBacklog){
+    // Override de horário para este dia — não cria card avulso
+    var ovKey=item._rId+'_'+item._day;
+    var ovRes=await api('POST','/api/semanas/'+S.weekKey+'/override',{key:ovKey,fields:{horario:toTime}});
+    if(ovRes&&ovRes.ok){
+      S.rotinaOverrides[ovKey]=Object.assign(S.rotinaOverrides[ovKey]||{},{horario:toTime});
+    }
   } else {
     var moved=await api('POST','/api/semanas/'+S.weekKey+'/move',{from_key:fromKey,to_key:toKey,item_id:item.id});
     if(moved&&moved.ok){
@@ -991,7 +1049,14 @@ function openCardModal(item, source, cellKey, defaultTime, dayIndex) {
     var editItem = item;
     if(source==='rotina_blk' && item._rId){
       var rOrig = S.rotina.find(function(r){return r.id===item._rId;});
-      if(rOrig){ editItem = Object.assign({}, rOrig, {_isRotina:true,_rId:item._rId,_day:item._day,done:item.done,id:rOrig.id}); source='rotina'; }
+      if(rOrig){
+        editItem = Object.assign({}, rOrig, {
+          _isRotina:true, _rId:item._rId, _day:item._day,
+          _hasOverride:item._hasOverride||false,
+          done:item.done, id:rOrig.id
+        });
+        source='rotina';
+      }
     }
     document.getElementById('cm-id').textContent = editItem.id || (editItem._rId||'');
     document.getElementById('cm-title').value = editItem.titulo||editItem.texto||'';
@@ -999,7 +1064,7 @@ function openCardModal(item, source, cellKey, defaultTime, dayIndex) {
     // source='rotina' garante tipo='rotina' independente do campo armazenado
     document.getElementById('cm-tipo').value = (source==='rotina') ? 'rotina' : (editItem.tipo||'unica');
     document.getElementById('cm-urg').value = editItem.urgencia||'m';
-    document.getElementById('cm-prazo').value = editItem.prazo||editItem.data||editItem.data_inicio||todayISO;
+    document.getElementById('cm-prazo').value = editItem.prazo||editItem.data||'';
     document.getElementById('cm-horario').value = editItem.horario||'';
     document.getElementById('cm-horario-fim').value = editItem.horario_fim||'';
     updateDuracao();
@@ -1039,16 +1104,29 @@ function openCardModal(item, source, cellKey, defaultTime, dayIndex) {
   };
   S.cardCtx = {item:item, source:source, cellKey:cellKey, defaultTime:defaultTime, dayIndex:dayIndex, isNew:isNew, oldState:oldState};
 
-  // Mostrar botão "Remover do Planner" apenas para itens existentes agendados (não rotinas)
-  var unschedBtn = document.getElementById('cm-unschedule-btn');
-  if(unschedBtn){
-    var showUnsched = !isNew && source !== 'rotina' &&
-      !!(item && (item.data_inicio || item.horario));
-    unschedBtn.style.display = showUnsched ? '' : 'none';
+  // Gerar rodapé dinamicamente
+  var foot = document.getElementById('cm-foot');
+  var isRotinaInstance = !isNew && source==='rotina' && item._isRotina && (item._day !== undefined);
+  if(foot){
+    if(isRotinaInstance){
+      foot.innerHTML =
+        '<button class="btn-p" onclick="saveOverride()">💾 Salvar só esta ocorrência</button>'
+       +'<button class="btn-g" onclick="saveCardModal()">🔄 Salvar rotina inteira</button>'
+       +(item._hasOverride?'<button class="btn-d" style="font-size:10px;padding:6px 12px" onclick="revertOverride()">↩️ Reverter ao original</button>':'')
+       +'<button class="btn-g" onclick="closeCardModal()">Cancelar</button>'
+       +'<div style="margin-left:auto;font-family:var(--font-m);font-size:9px;color:var(--text3)" id="cm-saved-msg"></div>';
+    } else {
+      var showUnsched = !isNew && source !== 'rotina' && !!(item && (item.data_inicio || item.horario));
+      foot.innerHTML =
+        '<button class="btn-p" onclick="saveCardModal()">💾 Salvar</button>'
+       +'<button class="btn-g" onclick="closeCardModal()">Cancelar</button>'
+       +'<button class="btn-d cm-unschedule-btn" id="cm-unschedule-btn" onclick="unscheduleCard()" title="Remove datas e horário — item volta ao To Do sem agendamento" style="display:'+(showUnsched?'':'none')+'">📤 Remover do Planner</button>'
+       +'<div style="margin-left:auto;font-family:var(--font-m);font-size:9px;color:var(--text3)" id="cm-saved-msg"></div>';
+    }
   }
 
   switchCmTab('detalhes', document.querySelector('.cm-tab[data-tab="detalhes"]'));
-  document.getElementById('cm-saved-msg').textContent='';
+  var smEl = document.getElementById('cm-saved-msg'); if(smEl) smEl.textContent='';
   modal.classList.add('open');
   setTimeout(function(){document.getElementById('cm-title').focus();},80);
 }
@@ -1067,6 +1145,39 @@ function toggleKanbanUI(show){
 function closeCardModal(){
   document.getElementById('card-overlay').classList.remove('open');
   S.cardCtx=null;
+}
+
+async function saveOverride(){
+  var ctx=S.cardCtx; if(!ctx||!ctx.item) return;
+  var item=ctx.item;
+  if(!item._rId||item._day===undefined) return;
+  var r=S.rotina.find(function(x){return x.id===item._rId;});
+  if(!r) return;
+  var fields={};
+  var hor=(document.getElementById('cm-horario')||{}).value||null;
+  var cat=(document.getElementById('cm-cat')||{}).value||null;
+  if(hor && hor!==r.horario)       fields.horario=hor;
+  if(cat && cat!==r.categoria_id)  fields.categoria_id=cat;
+  if(!Object.keys(fields).length){ closeCardModal(); return; }
+  var ovKey=item._rId+'_'+item._day;
+  var res=await api('POST','/api/semanas/'+S.weekKey+'/override',{key:ovKey,fields:fields});
+  if(res&&res.ok){
+    S.rotinaOverrides[ovKey]=Object.assign(S.rotinaOverrides[ovKey]||{},fields);
+    buildGrade();
+    var msg=document.getElementById('cm-saved-msg');
+    if(msg){msg.textContent='✅ Ajuste salvo para esta ocorrência';setTimeout(function(){closeCardModal();},900);}
+  }
+}
+
+async function revertOverride(){
+  var ctx=S.cardCtx; if(!ctx||!ctx.item) return;
+  var item=ctx.item;
+  if(!item._rId||item._day===undefined) return;
+  var ovKey=item._rId+'_'+item._day;
+  await api('DELETE','/api/semanas/'+S.weekKey+'/override/'+ovKey);
+  delete S.rotinaOverrides[ovKey];
+  buildGrade();
+  closeCardModal();
 }
 
 async function unscheduleCard(){
@@ -1233,6 +1344,8 @@ async function saveCardModal(){
       } else {
         await api('PUT','/api/backlog/'+item.id,payload);
         renderBacklog();
+        buildGrade();
+        buildBLMini();
       }
     } else if(source==='semana'){
       if(tipo==='rotina'){
@@ -1366,15 +1479,35 @@ async function addCardComment(){
 }
 
 // ── VÍNCULOS ──────────────────────────────────
+var DEP_INFO = {
+  relacionado:   {icon:'🔗', label:'Relacionado',   style:'color:var(--text3)'},
+  antecede:      {icon:'⏩', label:'Antecede',       style:'color:#3498db'},
+  sucede:        {icon:'⏪', label:'Sucede',          style:'color:var(--amber)'},
+  bloqueia:      {icon:'🚫', label:'Bloqueia',       style:'color:#e67e22'},
+  bloqueado_por: {icon:'⛔', label:'Bloqueado por',  style:'color:#e74c3c;font-weight:600'}
+};
 function renderCmVinculos(vinculos){
   var wrap=document.getElementById('cm-vinculos-list'); if(!wrap) return;
   wrap.innerHTML='';
+  if(!vinculos||!vinculos.length){
+    wrap.innerHTML='<div style="font-size:11px;color:var(--text3);padding:8px 0">Nenhum vínculo adicionado.</div>';
+    return;
+  }
   (vinculos||[]).forEach(function(v){
+    var dep=v.dep||'relacionado';
+    var di=DEP_INFO[dep]||DEP_INFO.relacionado;
+    var isBlocked=dep==='bloqueado_por';
+    var isSucede=dep==='sucede';
+    var alertHint='';
+    if(isBlocked) alertHint='<span style="font-size:9px;color:#e74c3c;margin-left:4px" title="Este item está bloqueado por este vínculo">⚠️ bloqueante</span>';
+    if(isSucede)  alertHint='<span style="font-size:9px;color:var(--amber);margin-left:4px" title="Este item depende do outro para ser concluído">⚠️ pendente</span>';
     var div=document.createElement('div'); div.className='vinculo-item';
-    div.innerHTML='<span class="vinculo-id">'+v.id+'</span>'
-      +'<span class="vinculo-title">'+v.titulo+'</span>'
-      +'<span class="vinculo-tipo">'+v.tipo+'</span>'
-      +'<button class="btn-icon" style="font-size:11px" onclick="removeVinculo(\''+v.id+'\')">✕</button>';
+    div.style.cssText='display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid var(--border)';
+    div.innerHTML='<span class="vinculo-id" style="font-family:var(--font-m);font-size:9px;color:var(--text3)">'+v.id+'</span>'
+      +'<span style="'+di.style+';font-size:10px;white-space:nowrap">'+di.icon+' '+di.label+'</span>'
+      +'<span class="vinculo-title" style="flex:1;font-size:12px">'+v.titulo+'</span>'
+      +alertHint
+      +'<button class="btn-icon" style="font-size:11px;flex-shrink:0" onclick="removeVinculo(\''+v.id+'\')">✕</button>';
     wrap.appendChild(div);
   });
 }
@@ -1396,7 +1529,9 @@ function addVinculo(item){
   var ctx=S.cardCtx; if(!ctx||!ctx.item) return;
   if(!ctx.item.vinculos) ctx.item.vinculos=[];
   if(ctx.item.vinculos.find(function(v){return v.id===item.id;})) return;
-  ctx.item.vinculos.push(item);
+  var depSel=document.getElementById('cm-dep-tipo');
+  var dep=depSel?depSel.value:'relacionado';
+  ctx.item.vinculos.push({id:item.id,titulo:item.titulo,tipo:item.tipo,dep:dep});
   renderCmVinculos(ctx.item.vinculos);
 }
 function removeVinculo(id){
@@ -1474,12 +1609,28 @@ function renderBacklog(){
     var tr=document.createElement('tr');
     tr.dataset.id=task.id;
     if(task.concluido) tr.classList.add('done-row');
+
+    // Dependency alerts for To Do rows
+    var taskDepA=!task.concluido?getDepAlerts(task.vinculos):{blocked:false,sucede:false,hasAntecede:false,blockedBy:[],sucedeItems:[]};
+    var depBadge='';
+    if(taskDepA.blocked){
+      var bNames=taskDepA.blockedBy.map(function(v){return v.id;}).join(', ');
+      depBadge='<span style="font-family:var(--font-m);font-size:9px;color:#e74c3c;margin-left:6px;font-weight:600" title="Bloqueado por: '+bNames+'">⛔ Bloqueado</span>';
+      tr.style.cssText='background:rgba(231,76,60,.05);';
+    } else if(taskDepA.sucede){
+      var sNames=taskDepA.sucedeItems.map(function(v){return v.id;}).join(', ');
+      depBadge='<span style="font-family:var(--font-m);font-size:9px;color:var(--amber);margin-left:6px" title="Sucede '+sNames+' — item anterior ainda pendente">⚠️ Dep. pendente</span>';
+    } else if(taskDepA.hasAntecede){
+      depBadge='<span style="font-family:var(--font-m);font-size:9px;color:#3498db;margin-left:6px;opacity:.8" title="Habilita ou está relacionado a outros itens">⏩ Habilitador</span>';
+    }
+
     tr.innerHTML='<td class="td-drag" title="Arrastar para reordenar">'+(noFilter?'⠿':'')+'</td>'
       +'<td class="td-check"><div class="chk'+(task.concluido?' done':'')+'">✓</div></td>'
       +'<td class="td-id">'+task.id+'</td>'
       +'<td class="td-title">'+(task.titulo||'')
         +(inPlanner?'<span class="td-planned-badge" title="Agendado no calendário">📅</span>':'')
         +(noPrazo?'<span class="no-prazo-badge" style="margin-left:6px">sem prazo</span>':'')
+        +depBadge
         +((task.checklist||[]).length?'<span style="font-family:var(--font-m);font-size:9px;color:var(--text3);margin-left:4px"> ☑'+(task.checklist.filter(function(c){return c.done;}).length)+'/'+task.checklist.length+'</span>':'')
         +((task.comentarios||[]).length?'<span style="font-family:var(--font-m);font-size:9px;color:var(--text3);margin-left:4px"> 💬'+task.comentarios.length+'</span>':'')
         +'</td>'
@@ -2026,7 +2177,7 @@ async function promoverParaBacklog(){
       descricao:'Promovido da revisão semanal '+S.weekKey,checklist:[],comentarios:[],vinculos:[]});
     if(blItem){
       S.backlog.push(blItem);
-      siteAlert('✅ Plano criado e adicionado ao Backlog como '+blItem.id+'!');
+      siteAlert('✅ Plano criado e adicionado ao To Do como '+blItem.id+'!');
     }
     buildPlanosAcao(S.revisao.planos_acao);
     fecharNovoPlano();
