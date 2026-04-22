@@ -80,6 +80,7 @@
             <button class="pr-tab"        onclick="switchPrTab('rot',this)"   title="Rotina">🔄</button>
             <button class="pr-tab"        onclick="switchPrTab('imp',this)"   title="Imprevistos">⚡</button>
             <button class="pr-tab"        onclick="switchPrTab('stats',this)" title="Progresso">📊</button>
+            <button class="pr-tab"        onclick="switchPrTab('cal',this)"   title="Calendários Externos">🗓️</button>
           </div>
           <div class="pr-panels">
             <div class="pr-panel active" id="pr-bl">
@@ -95,6 +96,9 @@
             </div>
             <div class="pr-panel" id="pr-stats">
               <div class="pr-list" id="pr-stats-list" style="padding:12px"></div>
+            </div>
+            <div class="pr-panel" id="pr-cal">
+              <div class="pr-list" id="pr-cal-list" style="padding:12px"></div>
             </div>
           </div>
         </div>
@@ -812,5 +816,30 @@ if ('serviceWorker' in navigator) {
 
 <!-- MOBILE BACKDROP (sidebar overlay) -->
 <div class="mobile-backdrop" id="mobile-backdrop" onclick="closeMobileSidebar()"></div>
+
+<!-- DELETE CONFIRM DIALOG -->
+<div class="overlay" id="delete-overlay" onclick="if(event.target===this)closeDeleteModal()">
+  <div class="delete-modal">
+    <div class="delete-modal-icon">⚠️</div>
+    <div class="delete-modal-title">Confirmar exclusão</div>
+    <div class="delete-modal-body">
+      Você está prestes a excluir o item:<br>
+      <strong id="delete-item-title" style="color:var(--text1)">—</strong>
+    </div>
+    <div id="delete-rotina-warn" class="delete-rotina-warn" style="display:none">
+      Esta é uma <strong>rotina recorrente</strong>. A exclusão remove todas as ocorrências passadas e futuras.
+    </div>
+    <div class="delete-modal-hint">
+      Esta ação é <strong>irreversível</strong>. Digite <code>excluir</code> para confirmar:
+    </div>
+    <input id="delete-confirm-input" class="delete-confirm-input" type="text"
+      placeholder="excluir" autocomplete="off" oninput="onDeleteInput(this.value)">
+    <div class="delete-modal-foot">
+      <button class="btn-d delete-confirm-btn" id="delete-confirm-btn" disabled onclick="confirmDeleteCard()">🗑️ Excluir</button>
+      <button class="btn-warn" id="delete-archive-btn" onclick="confirmArchiveCard()">📦 Arquivar</button>
+      <button class="btn-g" onclick="closeDeleteModal()">Cancelar</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>

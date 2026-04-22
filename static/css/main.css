@@ -1568,6 +1568,112 @@ html[data-theme="light"] .blk-removed{border-left-color:rgba(0,0,0,.15);backgrou
 .blk.has-override { border-left-style: dashed; }
 .blk-override-tag { font-size: 8px; opacity: 0.75; cursor: help; }
 
+/* ── External Calendar Events ───────────────── */
+.ext-event {
+  display: flex; align-items: flex-start; gap: 4px;
+  padding: 3px 6px; margin: 2px 0; border-radius: 4px;
+  border-left: 3px solid #aaa;
+  background: rgba(255,255,255,0.06);
+  font-family: var(--font-m); font-size: 10px; color: var(--text2);
+  cursor: default; user-select: none; overflow: hidden;
+}
+.ext-event-google    { border-left-color: #4285f4; }
+.ext-event-microsoft { border-left-color: #0078d4; }
+.ext-event-allday {
+  opacity: 0.7; font-style: italic;
+  background: rgba(255,255,255,0.04);
+}
+.ext-event-icon  { flex-shrink: 0; font-size: 9px; line-height: 1.4; }
+.ext-event-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-event-time  { flex-shrink: 0; font-size: 9px; color: var(--text3); }
+
+/* ── External Calendar Panel ─────────────────── */
+.cal-ext-section { margin-bottom: 16px; }
+.cal-ext-hdr {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--font-m); font-size: 11px; font-weight: 700;
+  color: var(--text2); margin-bottom: 8px; padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.cal-ext-badge {
+  font-size: 9px; padding: 1px 5px; border-radius: 8px;
+  background: rgba(255,255,255,0.08); color: var(--text3);
+  margin-left: auto;
+}
+.cal-toggle-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 0; font-family: var(--font-m); font-size: 11px; color: var(--text2);
+}
+.cal-toggle-row input[type=checkbox] { accent-color: var(--gold); cursor: pointer; }
+
+/* ── Conflict Tag ────────────────────────────── */
+.blk-conflict-tag {
+  display: inline-block; font-size: 8px; padding: 1px 4px;
+  border-radius: 4px; background: rgba(230,173,30,0.25);
+  color: var(--amber); font-family: var(--font-m); font-weight: 700;
+  vertical-align: middle; cursor: help; white-space: nowrap;
+}
+
+/* ── Delete Confirm Dialog ───────────────────── */
+.delete-modal {
+  background: var(--bg2); border-radius: 12px;
+  padding: 28px 28px 20px; width: 360px; max-width: 94vw;
+  display: flex; flex-direction: column; gap: 12px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+  border: 1px solid rgba(231,76,60,0.3);
+}
+.delete-modal-icon { font-size: 28px; text-align: center; }
+.delete-modal-title {
+  font-size: 16px; font-weight: 700; color: var(--text1);
+  text-align: center;
+}
+.delete-modal-body {
+  font-size: 13px; color: var(--text2); text-align: center; line-height: 1.5;
+}
+.delete-rotina-warn {
+  background: rgba(231,76,60,0.12); border: 1px solid rgba(231,76,60,0.3);
+  border-radius: 6px; padding: 8px 12px;
+  font-size: 11px; color: #e74c3c; line-height: 1.5;
+}
+.delete-modal-hint {
+  font-size: 11px; color: var(--text3); text-align: center; line-height: 1.5;
+}
+.delete-modal-hint code {
+  background: rgba(255,255,255,0.08); padding: 1px 5px; border-radius: 4px;
+  color: var(--text2); font-family: var(--font-m);
+}
+.delete-confirm-input {
+  width: 100%; box-sizing: border-box;
+  padding: 8px 12px; border-radius: 6px;
+  border: 1.5px solid rgba(255,255,255,0.12);
+  background: var(--bg1); color: var(--text1);
+  font-size: 14px; text-align: center; letter-spacing: 2px;
+  transition: border-color 0.15s;
+}
+.delete-confirm-input:focus { outline: none; border-color: #e74c3c; }
+.delete-confirm-input.valid  { border-color: #e74c3c; }
+.delete-modal-foot {
+  display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;
+  margin-top: 4px;
+}
+.delete-confirm-btn:disabled { opacity: 0.38; cursor: not-allowed; }
+.btn-warn {
+  padding: 7px 14px; border-radius: 6px; border: none; cursor: pointer;
+  font-size: 12px; font-weight: 600;
+  background: rgba(230,173,30,0.18); color: var(--amber);
+  transition: background 0.15s;
+}
+.btn-warn:hover { background: rgba(230,173,30,0.3); }
+
+/* Botão excluir no footer do modal */
+.cm-delete-btn {
+  margin-left: auto; padding: 6px 12px; border-radius: 6px; border: none;
+  cursor: pointer; font-size: 11px; font-weight: 600;
+  background: rgba(231,76,60,0.12); color: #e74c3c;
+  transition: background 0.15s;
+}
+.cm-delete-btn:hover { background: rgba(231,76,60,0.25); }
+
 /* ── Mobile Overrides ────────────────────────── */
 @media(max-width:680px) {
   .canvas-surface-wrap { -webkit-overflow-scrolling: touch; }

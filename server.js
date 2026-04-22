@@ -116,6 +116,8 @@ async function createSchema() {
     'ALTER TABLE configuracao ADD COLUMN push_sub TEXT',
     "ALTER TABLE configuracao ADD COLUMN notif_som_tipo TEXT NOT NULL DEFAULT 'sino'",
     "ALTER TABLE semana ADD COLUMN rotina_overrides TEXT DEFAULT '{}'",
+    'ALTER TABLE backlog ADD COLUMN arquivado INTEGER DEFAULT 0',
+    'ALTER TABLE rotina  ADD COLUMN arquivado INTEGER DEFAULT 0',
   ];
   for (const stmt of alterStmts) {
     try { await dbRun(stmt, []); } catch(_) { /* column already exists */ }
@@ -522,7 +524,7 @@ app.delete('/api/categorias/:cid', requireLogin, async (req, res) => {
 const ROTINA_JSON = ['dias','comentarios','checklist','vinculos'];
 
 app.get('/api/rotina', requireLogin, async (req, res) => {
-  const rows = await dbAll('SELECT * FROM rotina WHERE user_id = ?', [req.session.userId]);
+  const rows = await dbAll('SELECT * FROM rotina WHERE user_id = ? AND (arquivado IS NULL OR arquivado = 0)', [req.session.userId]);
   res.json(rows.map(r => rowToObj(r, ROTINA_JSON)));
 });
 
@@ -594,6 +596,11 @@ app.delete('/api/rotina/:rid', requireLogin, async (req, res) => {
   res.json({ ok: true });
 });
 
+app.put('/api/rotina/:rid/arquivar', requireLogin, async (req, res) => {
+  await dbRun('UPDATE rotina SET arquivado = 1 WHERE user_id = ? AND id = ?', [req.session.userId, req.params.rid]);
+  res.json({ ok: true });
+});
+
 app.post('/api/rotina/:rid/comentario', requireLogin, async (req, res) => {
   const uid = req.session.userId;
   const r   = await dbGet('SELECT * FROM rotina WHERE user_id = ? AND id = ?', [uid, req.params.rid]);
@@ -607,7 +614,7 @@ app.post('/api/rotina/:rid/comentario', requireLogin, async (req, res) => {
 
 // ── BACKLOG ───────────────────────────────────
 app.get('/api/backlog', requireLogin, async (req, res) => {
-  const rows = await dbAll('SELECT * FROM backlog WHERE user_id = ? ORDER BY ordem, criado', [req.session.userId]);
+  const rows = await dbAll('SELECT * FROM backlog WHERE user_id = ? AND (arquivado IS NULL OR arquivado = 0) ORDER BY ordem, criado', [req.session.userId]);
   res.json(rows.map(r => rowToObj(r, ['comentarios','checklist','vinculos','dias'])));
 });
 
@@ -662,6 +669,11 @@ app.put('/api/backlog/:bid', requireLogin, async (req, res) => {
 
 app.delete('/api/backlog/:bid', requireLogin, async (req, res) => {
   await dbRun('DELETE FROM backlog WHERE user_id = ? AND id = ?', [req.session.userId, req.params.bid]);
+  res.json({ ok: true });
+});
+
+app.put('/api/backlog/:bid/arquivar', requireLogin, async (req, res) => {
+  await dbRun('UPDATE backlog SET arquivado = 1 WHERE user_id = ? AND id = ?', [req.session.userId, req.params.bid]);
   res.json({ ok: true });
 });
 
@@ -1241,6 +1253,280 @@ app.post('/api/push/subscribe', requireLogin, async (req, res) => {
       [uid, sub, todayStr()]);
   }
   res.json({ ok: true });
+});
+
+// ── GOOGLE & MICROSOFT CALENDAR INTEGRATION ──
+// Requires env vars: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI
+//                    MS_CLIENT_ID, MS_CLIENT_SECRET, MS_REDIRECT_URI
+// Tokens stored in session only — never in DB (privacy by design)
+
+function oauthClose(msg) {
+  return `<!DOCTYPE html><html><body><script>
+    if(window.opener){window.opener.postMessage(${JSON.stringify(msg)},'*');window.close();}
+    else{document.body.textContent='Pode fechar esta janela.';setTimeout(()=>location.href='/',1200);}
+  <\/script></body></html>`;
+}
+
+// ── Google ────────────────────────────────────
+const GCAL_AUTH_URL  = 'https://accounts.google.com/o/oauth2/v2/auth';
+const GCAL_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+
+function gcalRedirectURI(req) {
+  return process.env.GOOGLE_REDIRECT_URI || `${req.protocol}://${req.get('host')}/auth/google/callback`;
+}
+
+async function refreshGcalToken(session) {
+  const tok = session.gcalToken;
+  if (!tok || !tok.refresh_token) return tok;
+  if (tok.expires_at && Date.now() < tok.expires_at - 120000) return tok;
+  try {
+    const r = await fetch(GCAL_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id:     process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        refresh_token: tok.refresh_token,
+        grant_type:    'refresh_token'
+      })
+    });
+    const nt = await r.json();
+    if (nt.access_token) {
+      const updated = Object.assign({}, tok, nt, { expires_at: Date.now() + (nt.expires_in || 3600) * 1000 });
+      session.gcalToken = updated;
+      return updated;
+    }
+  } catch(_) {}
+  return tok;
+}
+
+app.get('/auth/google', requireLogin, (req, res) => {
+  if (!process.env.GOOGLE_CLIENT_ID) return res.send(oauthClose('gcal_noconfig'));
+  const params = new URLSearchParams({
+    client_id:     process.env.GOOGLE_CLIENT_ID,
+    redirect_uri:  gcalRedirectURI(req),
+    response_type: 'code',
+    scope:         'https://www.googleapis.com/auth/calendar.readonly',
+    access_type:   'offline',
+    prompt:        'consent'
+  });
+  res.redirect(`${GCAL_AUTH_URL}?${params}`);
+});
+
+app.get('/auth/google/callback', requireLogin, async (req, res) => {
+  if (req.query.error || !req.query.code) return res.send(oauthClose('gcal_error'));
+  try {
+    const r = await fetch(GCAL_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code:          req.query.code,
+        client_id:     process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        redirect_uri:  gcalRedirectURI(req),
+        grant_type:    'authorization_code'
+      })
+    });
+    const tokens = await r.json();
+    if (tokens.error) return res.send(oauthClose('gcal_error'));
+    tokens.expires_at = Date.now() + (tokens.expires_in || 3600) * 1000;
+    req.session.gcalToken = tokens;
+    res.send(oauthClose('gcal_connected'));
+  } catch(_) { res.send(oauthClose('gcal_error')); }
+});
+
+app.post('/auth/google/disconnect', requireLogin, (req, res) => {
+  delete req.session.gcalToken;
+  res.json({ ok: true });
+});
+
+app.get('/api/gcal/calendars', requireLogin, async (req, res) => {
+  if (!req.session.gcalToken) return res.json({ connected: false, calendars: [] });
+  try {
+    const tok = await refreshGcalToken(req.session);
+    const r = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=100', {
+      headers: { Authorization: `Bearer ${tok.access_token}` }
+    });
+    const data = await r.json();
+    if (data.error) {
+      if (data.error.code === 401) { delete req.session.gcalToken; return res.json({ connected: false, calendars: [] }); }
+      return res.json({ connected: true, calendars: [] });
+    }
+    const calendars = (data.items || []).map(c => ({
+      id:      c.id,
+      name:    c.summary || c.id,
+      color:   c.backgroundColor || '#4285f4',
+      primary: !!c.primary
+    }));
+    res.json({ connected: true, calendars });
+  } catch(_) { res.json({ connected: true, calendars: [] }); }
+});
+
+app.get('/api/gcal/events', requireLogin, async (req, res) => {
+  if (!req.session.gcalToken) return res.json({ connected: false, events: [] });
+  try {
+    const tok = await refreshGcalToken(req.session);
+    const { start, end, calendarId = 'primary' } = req.query;
+    const params = new URLSearchParams({
+      timeMin:       `${start}T00:00:00Z`,
+      timeMax:       `${end}T23:59:59Z`,
+      singleEvents:  'true',
+      orderBy:       'startTime',
+      maxResults:    '250'
+    });
+    const calEnc = encodeURIComponent(calendarId);
+    const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${calEnc}/events?${params}`, {
+      headers: { Authorization: `Bearer ${tok.access_token}` }
+    });
+    const data = await r.json();
+    if (data.error) {
+      if (data.error.code === 401) { delete req.session.gcalToken; return res.json({ connected: false, events: [] }); }
+      return res.json({ connected: true, events: [] });
+    }
+    const events = (data.items || []).map(e => ({
+      id:     e.id,
+      title:  e.summary || '(sem título)',
+      start:  e.start.dateTime || e.start.date,
+      end:    e.end.dateTime   || e.end.date,
+      allDay: !e.start.dateTime,
+      source: 'google',
+      calendarId
+    }));
+    res.json({ connected: true, events });
+  } catch(_) { res.json({ connected: true, events: [] }); }
+});
+
+// ── Microsoft / Outlook ───────────────────────
+const MS_AUTH_URL  = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize';
+const MS_TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
+
+function msRedirectURI(req) {
+  return process.env.MS_REDIRECT_URI || `${req.protocol}://${req.get('host')}/auth/microsoft/callback`;
+}
+
+async function refreshMsalToken(session) {
+  const tok = session.msalToken;
+  if (!tok || !tok.refresh_token) return tok;
+  if (tok.expires_at && Date.now() < tok.expires_at - 120000) return tok;
+  try {
+    const r = await fetch(MS_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id:     process.env.MS_CLIENT_ID,
+        client_secret: process.env.MS_CLIENT_SECRET,
+        refresh_token: tok.refresh_token,
+        grant_type:    'refresh_token',
+        scope:         'https://graph.microsoft.com/Calendars.Read offline_access'
+      })
+    });
+    const nt = await r.json();
+    if (nt.access_token) {
+      const updated = Object.assign({}, tok, nt, { expires_at: Date.now() + (nt.expires_in || 3600) * 1000 });
+      session.msalToken = updated;
+      return updated;
+    }
+  } catch(_) {}
+  return tok;
+}
+
+app.get('/auth/microsoft', requireLogin, (req, res) => {
+  if (!process.env.MS_CLIENT_ID) return res.send(oauthClose('mscal_noconfig'));
+  const params = new URLSearchParams({
+    client_id:     process.env.MS_CLIENT_ID,
+    redirect_uri:  msRedirectURI(req),
+    response_type: 'code',
+    scope:         'https://graph.microsoft.com/Calendars.Read offline_access',
+    response_mode: 'query'
+  });
+  res.redirect(`${MS_AUTH_URL}?${params}`);
+});
+
+app.get('/auth/microsoft/callback', requireLogin, async (req, res) => {
+  if (req.query.error || !req.query.code) return res.send(oauthClose('mscal_error'));
+  try {
+    const r = await fetch(MS_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code:          req.query.code,
+        client_id:     process.env.MS_CLIENT_ID,
+        client_secret: process.env.MS_CLIENT_SECRET,
+        redirect_uri:  msRedirectURI(req),
+        grant_type:    'authorization_code',
+        scope:         'https://graph.microsoft.com/Calendars.Read offline_access'
+      })
+    });
+    const tokens = await r.json();
+    if (tokens.error) return res.send(oauthClose('mscal_error'));
+    tokens.expires_at = Date.now() + (tokens.expires_in || 3600) * 1000;
+    req.session.msalToken = tokens;
+    res.send(oauthClose('mscal_connected'));
+  } catch(_) { res.send(oauthClose('mscal_error')); }
+});
+
+app.post('/auth/microsoft/disconnect', requireLogin, (req, res) => {
+  delete req.session.msalToken;
+  res.json({ ok: true });
+});
+
+app.get('/api/mscal/calendars', requireLogin, async (req, res) => {
+  if (!req.session.msalToken) return res.json({ connected: false, calendars: [] });
+  try {
+    const tok = await refreshMsalToken(req.session);
+    const r = await fetch('https://graph.microsoft.com/v1.0/me/calendars?$select=id,name,isDefaultCalendar,hexColor&$top=100', {
+      headers: { Authorization: `Bearer ${tok.access_token}` }
+    });
+    const data = await r.json();
+    if (data.error) {
+      if (data.error.code === 'InvalidAuthenticationToken') { delete req.session.msalToken; return res.json({ connected: false, calendars: [] }); }
+      return res.json({ connected: true, calendars: [] });
+    }
+    const calendars = (data.value || []).map(c => ({
+      id:      c.id,
+      name:    c.name || c.id,
+      color:   c.hexColor || '#0078d4',
+      primary: !!c.isDefaultCalendar
+    }));
+    res.json({ connected: true, calendars });
+  } catch(_) { res.json({ connected: true, calendars: [] }); }
+});
+
+app.get('/api/mscal/events', requireLogin, async (req, res) => {
+  if (!req.session.msalToken) return res.json({ connected: false, events: [] });
+  try {
+    const tok = await refreshMsalToken(req.session);
+    const { start, end, calendarId } = req.query;
+    const base = calendarId
+      ? `https://graph.microsoft.com/v1.0/me/calendars/${encodeURIComponent(calendarId)}/calendarView`
+      : 'https://graph.microsoft.com/v1.0/me/calendarView';
+    const url = `${base}?startDateTime=${start}T00:00:00Z&endDateTime=${end}T23:59:59Z&$select=subject,start,end,isAllDay&$top=250`;
+    const r = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${tok.access_token}`,
+        Prefer:        'outlook.timezone="UTC"'
+      }
+    });
+    const data = await r.json();
+    if (data.error) {
+      if (data.error.code === 'InvalidAuthenticationToken') { delete req.session.msalToken; return res.json({ connected: false, events: [] }); }
+      return res.json({ connected: true, events: [] });
+    }
+    const events = (data.value || []).map(e => ({
+      id:     e.id,
+      title:  e.subject || '(sem título)',
+      start:  e.start.dateTime.replace(/(\.\d+)?$/, 'Z'),
+      end:    e.end.dateTime.replace(/(\.\d+)?$/, 'Z'),
+      allDay: e.isAllDay,
+      source: 'microsoft',
+      calendarId: calendarId || null
+    }));
+    res.json({ connected: true, events });
+  } catch(_) { res.json({ connected: true, events: [] }); }
+});
+
+app.get('/api/cal/status', requireLogin, (req, res) => {
+  res.json({ google: !!req.session.gcalToken, microsoft: !!req.session.msalToken });
 });
 
 // ── AI CHAT ───────────────────────────────────

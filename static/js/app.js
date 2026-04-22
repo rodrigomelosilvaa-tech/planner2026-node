@@ -6,6 +6,8 @@ var S = {
   page: 'planner', weekOffset: 0, calMonth: new Date(),
   categorias: [], rotina: [], backlog: [], imprevistos: [],
   semana: {}, rotinaDone: {}, rotinaOverrides: {},
+  gcal:  { connected: false, calendars: [], selectedIds: [], events: [] },
+  mscal: { connected: false, calendars: [], selectedIds: [], events: [] },
   calBulkDone: {}, // rotinaDone por semana para o calendário
   blFilter: 'all', blWeekOnly: false,
   revisao: {}, drag: null, weekKey: '',
@@ -295,12 +297,216 @@ function catColor(id){return getCat(id).cor;}
 function catName(id){return getCat(id).nome;}
 function catIcon(id){return getCat(id).icone;}
 
+// ── CALENDÁRIOS EXTERNOS ─────────────────────
+function isoToLocalHM(isoStr){
+  if(!isoStr) return null;
+  var d=new Date(isoStr);
+  return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0');
+}
+function isoToLocalDate(isoStr){
+  if(!isoStr) return null;
+  var d=new Date(isoStr);
+  return d.getFullYear()+'-'+(d.getMonth()+1).toString().padStart(2,'0')+'-'+d.getDate().toString().padStart(2,'0');
+}
+function hmAddMinutes(hm,mins){
+  if(!hm) return null;
+  var p=hm.split(':'), h=parseInt(p[0]), m=parseInt(p[1])+mins;
+  h+=Math.floor(m/60); m=m%60;
+  return (h%24).toString().padStart(2,'0')+':'+m.toString().padStart(2,'0');
+}
+function processExtEvents(rawEvents){
+  return (rawEvents||[]).map(function(e){
+    if(e.allDay) return Object.assign({},e,{date:e.start.substring(0,10),startTime:null,endTime:null});
+    return Object.assign({},e,{date:isoToLocalDate(e.start),startTime:isoToLocalHM(e.start),endTime:isoToLocalHM(e.end)});
+  });
+}
+function getActiveExtEvents(){
+  var evts=[];
+  if(S.gcal.connected)  evts=evts.concat(S.gcal.events);
+  if(S.mscal.connected) evts=evts.concat(S.mscal.events);
+  return evts;
+}
+function getExtEventsForCell(dayISO, time){
+  return getActiveExtEvents().filter(function(e){
+    return !e.allDay && e.startTime && e.date===dayISO && findSlot(e.startTime)===time;
+  });
+}
+function hasExtConflict(plannerHorario, plannerHorarioFim, dayISO){
+  if(!plannerHorario||!dayISO) return false;
+  var piEnd=plannerHorarioFim||hmAddMinutes(plannerHorario,30);
+  return getActiveExtEvents().some(function(e){
+    if(e.allDay||!e.startTime||e.date!==dayISO) return false;
+    var eeEnd=e.endTime||hmAddMinutes(e.startTime,30);
+    return plannerHorario<eeEnd && piEnd>e.startTime;
+  });
+}
+
+async function loadExternalCals(){
+  var status=await api('GET','/api/cal/status');
+  if(!status) return;
+  S.gcal.connected  = !!status.google;
+  S.mscal.connected = !!status.microsoft;
+
+  // Fetch calendar lists (to show checkboxes in panel)
+  var calListLoads=[
+    S.gcal.connected  ? api('GET','/api/gcal/calendars')  : Promise.resolve(null),
+    S.mscal.connected ? api('GET','/api/mscal/calendars') : Promise.resolve(null)
+  ];
+  var calLists=await Promise.all(calListLoads);
+  if(calLists[0]){
+    S.gcal.connected  = !!calLists[0].connected;
+    // Preserve existing list if API returned empty (graceful degradation)
+    if((calLists[0].calendars||[]).length) S.gcal.calendars=calLists[0].calendars;
+    // Remove selectedIds that no longer exist
+    var gcalIds=S.gcal.calendars.map(function(c){return c.id;});
+    S.gcal.selectedIds=S.gcal.selectedIds.filter(function(id){return gcalIds.indexOf(id)>=0;});
+  }
+  if(calLists[1]){
+    S.mscal.connected  = !!calLists[1].connected;
+    if((calLists[1].calendars||[]).length) S.mscal.calendars=calLists[1].calendars;
+    var msIds=S.mscal.calendars.map(function(c){return c.id;});
+    S.mscal.selectedIds=S.mscal.selectedIds.filter(function(id){return msIds.indexOf(id)>=0;});
+  }
+
+  // Fetch events only for selected calendars
+  var dates=getWeekDates();
+  var start=localDateISO(dates[0]), end=localDateISO(dates[6]);
+  var gcalEvents=[], msEvents=[];
+
+  if(S.gcal.connected && S.gcal.selectedIds.length>0){
+    var gcalLoads=S.gcal.selectedIds.map(function(id){
+      return api('GET','/api/gcal/events?calendarId='+encodeURIComponent(id)+'&start='+start+'&end='+end);
+    });
+    var gcalResults=await Promise.all(gcalLoads);
+    gcalResults.forEach(function(r){ if(r&&r.events) gcalEvents=gcalEvents.concat(r.events); });
+  }
+  if(S.mscal.connected && S.mscal.selectedIds.length>0){
+    var msLoads=S.mscal.selectedIds.map(function(id){
+      return api('GET','/api/mscal/events?calendarId='+encodeURIComponent(id)+'&start='+start+'&end='+end);
+    });
+    var msResults=await Promise.all(msLoads);
+    msResults.forEach(function(r){ if(r&&r.events) msEvents=msEvents.concat(r.events); });
+  }
+
+  S.gcal.events  = processExtEvents(gcalEvents);
+  S.mscal.events = processExtEvents(msEvents);
+  buildCalPanel();
+  buildGrade();
+}
+
+async function syncExternalCals(){
+  var btn=document.getElementById('cal-sync-btn');
+  if(btn){btn.disabled=true;btn.textContent='⏳ Sincronizando...';}
+  await loadExternalCals();
+  if(btn){btn.disabled=false;btn.textContent='🔄 Sincronizar agora';}
+}
+
+function oauthPopup(url, successMsg, errorMsg, callback){
+  window.open(url,'_calAuth','width=600,height=700,menubar=no,toolbar=no,status=no');
+  function handler(e){
+    if(e.data===successMsg||e.data===errorMsg||e.data===successMsg.replace('connected','noconfig')||e.data===errorMsg.replace('error','noconfig')){
+      window.removeEventListener('message',handler);
+      if(e.data===successMsg) callback(true);
+      else if(e.data.endsWith('_noconfig')) siteAlert('⚙️ Calendário não configurado no servidor. Adicione as variáveis de ambiente.');
+      else callback(false);
+    }
+  }
+  window.addEventListener('message',handler);
+}
+function connectGoogle(){
+  oauthPopup('/auth/google','gcal_connected','gcal_error',function(ok){
+    if(ok){loadExternalCals();siteAlert('✅ Google Calendar conectado!');}
+    else siteAlert('❌ Erro ao conectar Google Calendar.');
+  });
+}
+function connectMicrosoft(){
+  oauthPopup('/auth/microsoft','mscal_connected','mscal_error',function(ok){
+    if(ok){loadExternalCals();siteAlert('✅ Microsoft Calendar conectado!');}
+    else siteAlert('❌ Erro ao conectar Microsoft Calendar.');
+  });
+}
+async function disconnectGoogle(){
+  await api('POST','/auth/google/disconnect');
+  S.gcal.connected=false; S.gcal.events=[]; S.gcal.calendars=[]; S.gcal.selectedIds=[];
+  buildCalPanel(); buildGrade();
+}
+async function disconnectMicrosoft(){
+  await api('POST','/auth/microsoft/disconnect');
+  S.mscal.connected=false; S.mscal.events=[]; S.mscal.calendars=[]; S.mscal.selectedIds=[];
+  buildCalPanel(); buildGrade();
+}
+
+function buildCalPanel(){
+  var wrap=document.getElementById('pr-cal-list'); if(!wrap) return;
+  wrap.innerHTML='';
+
+  function calSection(provider, title, icon, color){
+    var sp=S[provider];
+    var sec=document.createElement('div'); sec.className='cal-ext-section';
+    var hdr='<div class="cal-ext-hdr"><span style="color:'+color+'">'+icon+' '+title+'</span>'
+      +(sp.connected?'<span class="cal-ext-badge" style="background:'+color+'20;color:'+color+'">● conectado</span>':'')+'</div>';
+    var body='';
+    if(!sp.connected){
+      var fn=provider==='gcal'?'connectGoogle':'connectMicrosoft';
+      body='<button class="btn-g" style="width:100%;margin-top:6px;font-size:11px" onclick="'+fn+'()">Conectar '+title+'</button>';
+    } else {
+      if(!sp.calendars.length){
+        body='<div style="font-size:10px;color:var(--text3);margin:6px 0">Carregando calendários...</div>';
+      } else {
+        sp.calendars.forEach(function(cal){
+          var checked=sp.selectedIds.indexOf(cal.id)>=0?' checked':'';
+          var safeId=cal.id.replace(/'/g,"\\'");
+          var calColor=cal.color||color;
+          body+='<label class="cal-toggle-row">'
+            +'<input type="checkbox"'+checked+' onchange="toggleCalendar(\''+provider+'\',\''+safeId+'\',this.checked)">'
+            +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+cal.name.replace(/"/g,'&quot;')+'">'+cal.name+'</span>'
+            +(cal.primary?'<span style="font-size:8px;color:'+calColor+';margin-left:4px;flex-shrink:0">★</span>':'')
+            +'</label>';
+        });
+        body+='<div style="font-size:9px;color:var(--text3);margin:4px 0 8px">'+sp.selectedIds.length+' de '+sp.calendars.length+' calendário(s) ativo(s)</div>';
+      }
+      var fn2=provider==='gcal'?'disconnectGoogle':'disconnectMicrosoft';
+      body+='<button class="btn-d" style="font-size:9px;padding:3px 8px;width:100%" onclick="'+fn2+'()">Desconectar</button>';
+    }
+    sec.innerHTML=hdr+body;
+    wrap.appendChild(sec);
+  }
+
+  calSection('gcal','Google Calendar','🗓️','#4285f4');
+  calSection('mscal','Microsoft / Outlook','📆','#0078d4');
+
+  var syncBtn=document.createElement('button');
+  syncBtn.id='cal-sync-btn'; syncBtn.className='btn-g';
+  syncBtn.style.cssText='width:100%;margin-top:14px;font-size:11px';
+  syncBtn.innerHTML='🔄 Sincronizar agora';
+  syncBtn.onclick=syncExternalCals;
+  wrap.appendChild(syncBtn);
+
+  var leg=document.createElement('div');
+  leg.style.cssText='margin-top:14px;font-size:10px;color:var(--text3);line-height:1.6';
+  leg.innerHTML='<b style="color:var(--text2)">Por padrão nenhum calendário externo é exibido.</b><br>'
+    +'Marque os calendários desejados acima.<br><br>'
+    +'<span style="color:var(--amber);font-weight:600">⚠️ Conflito</span> — indicado no card quando há sobreposição de horário com evento externo.';
+  wrap.appendChild(leg);
+}
+async function toggleCalendar(provider, calId, checked){
+  var sp=S[provider];
+  if(checked){
+    if(sp.selectedIds.indexOf(calId)<0) sp.selectedIds.push(calId);
+  } else {
+    sp.selectedIds=sp.selectedIds.filter(function(id){return id!==calId;});
+  }
+  buildCalPanel(); // update counter immediately
+  await loadExternalCals();
+}
+
 // ── PLANNER ───────────────────────────────────
 async function renderPlanner() {
   if(!S.weekKey) setWeekKey();
   await loadSemana();
   buildGrade();
   buildBLMini();
+  loadExternalCals(); // async, re-renders when done
 }
 
 function makeAlldayItem(it, source, dayIdx) {
@@ -444,10 +650,19 @@ function buildGrade() {
         var mini=makeAlldayItem(Object.assign({},it,{done:state==='done'}), 'rotina', dayIdx);
         adCell.appendChild(mini);
       });
+      // Eventos externos de dia todo
+      getActiveExtEvents().filter(function(e){return e.allDay&&e.date===slotISO;}).forEach(function(ee){
+        alldayTotalItems++;
+        var ev=document.createElement('div');
+        ev.className='ext-event ext-event-allday ext-event-'+ee.source;
+        ev.title=ee.title+' ('+ee.source+')';
+        ev.textContent=(ee.source==='google'?'🗓️':'📆')+' '+ee.title;
+        adCell.appendChild(ev);
+      });
       alldayRow.appendChild(adCell);
     })(ad);
   }
-  // Só adiciona a linha se houver itens
+  // Só adiciona a linha se houver itens (inclui externos)
   if(alldayTotalItems>0) body.appendChild(alldayRow);
   // ─────────────────────────────────────────────────────────────────────
 
@@ -456,6 +671,7 @@ function buildGrade() {
     for(var d=0;d<7;d++){
       var key=d+'_'+time.replace(':','');
       var isT=dates[d].getTime()===todayD.getTime();
+      var dayISO=localDateISO(dates[d]);
       var cell=document.createElement('div');
       cell.className='g-cell'+(isT?' is-today':'');
       cell.dataset.key=key;
@@ -491,10 +707,12 @@ function buildGrade() {
         }
         var ov = S.rotinaOverrides[rdKey]||{};
         var hasOv = Object.keys(ov).length > 0;
+        var efH = ov.horario || it.horario;
         cell.appendChild(makeBlk(Object.assign({}, it, ov, {
           id:rdKey, done:state==='done'||it.concluido,
           _isRotina:true, _rId:it.id, _day:d,
-          _hasOverride:hasOv, _overrideFields:ov
+          _hasOverride:hasOv, _overrideFields:ov,
+          _extConflict: hasExtConflict(efH, it.horario_fim, dayISO)
         }), key));
       });
 
@@ -524,7 +742,8 @@ function buildGrade() {
         }
         cell.appendChild(makeBlk(Object.assign({}, it, {
           id:rdKey, done:state==='done'||it.concluido,
-          _isRotina:true, _isBacklog:true, _rId:it.id, _day:d
+          _isRotina:true, _isBacklog:true, _rId:it.id, _day:d,
+          _extConflict: hasExtConflict(it.horario, it.horario_fim, dayISO)
         }), key));
       });
 
@@ -537,7 +756,18 @@ function buildGrade() {
         var db = b.data_item || b.prazo || b.data || '';
         return da < db ? -1 : da > db ? 1 : 0;
       });
-      cellItems.forEach(function(item){ cell.appendChild(makeBlk(item,key)); });
+      cellItems.forEach(function(item){ cell.appendChild(makeBlk(Object.assign({},item,{_extConflict:hasExtConflict(item.horario,item.horario_fim,dayISO)}),key)); });
+
+      // Eventos externos com horário nesta célula
+      getExtEventsForCell(dayISO, time).forEach(function(ee){
+        var ev=document.createElement('div');
+        ev.className='ext-event ext-event-'+ee.source;
+        ev.title=ee.title+(ee.startTime?' ('+ee.startTime+(ee.endTime?'-'+ee.endTime:'')+')':'')+' — '+ee.source;
+        ev.innerHTML='<span class="ext-event-icon">'+(ee.source==='google'?'🗓️':'📆')+'</span>'
+          +'<span class="ext-event-title">'+ee.title+'</span>'
+          +(ee.startTime?'<span class="ext-event-time">'+ee.startTime+(ee.endTime?'–'+ee.endTime:'')+'</span>':'');
+        cell.appendChild(ev);
+      });
 
       var ad=document.createElement('div'); ad.className='g-cell-add';
       var ab=document.createElement('button'); ab.className='g-cell-add-btn'; ab.textContent='+ adicionar';
@@ -670,12 +900,18 @@ function makeBlk(item, cellKey) {
     ? '<span class="blk-tag blk-override-tag" title="Horário ajustado só para este dia">✏️</span>'
     : '';
 
+  var conflictTag = (item._extConflict && !item.done)
+    ? '<span class="blk-tag blk-conflict-tag" title="Conflito com evento do calendário externo">⚠️ Conflito</span>'
+    : '';
+  if(item._extConflict && !item.done && !alertStyle)
+    alertStyle='outline:2px solid var(--amber) !important;outline-offset:-2px;';
+
   div.innerHTML='<div class="blk-t">'+(item.titulo||item.texto)+'</div>'
     +'<div class="blk-meta">'
     +horarioTag+durTag
     +'<span class="blk-id">'+(item._isRotina?item._rId:item.id)+'</span>'
     +'<span class="blk-tag">'+catIcon(item.categoria_id)+'</span>'
-    +typeTag+overrideTag+deadlineTag+depTag+clBadge+commBadge+vincBadge
+    +typeTag+overrideTag+deadlineTag+depTag+conflictTag+clBadge+commBadge+vincBadge
     +'</div>'
     +'<div class="blk-acts">'
     +'<button class="blk-act a-done" title="Concluir">✓</button>'
@@ -789,7 +1025,7 @@ function switchPrTab(name,btn){
   var panel=document.getElementById('pr-'+name); if(panel) panel.classList.add('active');
   document.querySelectorAll('.pr-tab').forEach(function(t){t.classList.remove('active');});
   if(btn) btn.classList.add('active');
-  var map={bl:buildBLMini, rot:buildRotMini, imp:buildImpMini, stats:buildStats};
+  var map={bl:buildBLMini, rot:buildRotMini, imp:buildImpMini, stats:buildStats, cal:buildCalPanel};
   if(map[name]) map[name]();
 }
 
@@ -1107,6 +1343,7 @@ function openCardModal(item, source, cellKey, defaultTime, dayIndex) {
   // Gerar rodapé dinamicamente
   var foot = document.getElementById('cm-foot');
   var isRotinaInstance = !isNew && source==='rotina' && item._isRotina && (item._day !== undefined);
+  var delBtn = isNew ? '' : '<button class="cm-delete-btn" onclick="deleteCardPrompt()" title="Excluir este item">🗑️ Excluir</button>';
   if(foot){
     if(isRotinaInstance){
       foot.innerHTML =
@@ -1114,14 +1351,16 @@ function openCardModal(item, source, cellKey, defaultTime, dayIndex) {
        +'<button class="btn-g" onclick="saveCardModal()">🔄 Salvar rotina inteira</button>'
        +(item._hasOverride?'<button class="btn-d" style="font-size:10px;padding:6px 12px" onclick="revertOverride()">↩️ Reverter ao original</button>':'')
        +'<button class="btn-g" onclick="closeCardModal()">Cancelar</button>'
-       +'<div style="margin-left:auto;font-family:var(--font-m);font-size:9px;color:var(--text3)" id="cm-saved-msg"></div>';
+       +'<div style="font-family:var(--font-m);font-size:9px;color:var(--text3)" id="cm-saved-msg"></div>'
+       +delBtn;
     } else {
       var showUnsched = !isNew && source !== 'rotina' && !!(item && (item.data_inicio || item.horario));
       foot.innerHTML =
         '<button class="btn-p" onclick="saveCardModal()">💾 Salvar</button>'
        +'<button class="btn-g" onclick="closeCardModal()">Cancelar</button>'
        +'<button class="btn-d cm-unschedule-btn" id="cm-unschedule-btn" onclick="unscheduleCard()" title="Remove datas e horário — item volta ao To Do sem agendamento" style="display:'+(showUnsched?'':'none')+'">📤 Remover do Planner</button>'
-       +'<div style="margin-left:auto;font-family:var(--font-m);font-size:9px;color:var(--text3)" id="cm-saved-msg"></div>';
+       +'<div style="font-family:var(--font-m);font-size:9px;color:var(--text3)" id="cm-saved-msg"></div>'
+       +delBtn;
     }
   }
 
@@ -1145,6 +1384,102 @@ function toggleKanbanUI(show){
 function closeCardModal(){
   document.getElementById('card-overlay').classList.remove('open');
   S.cardCtx=null;
+}
+
+// ── DELETE / ARCHIVE CARD ─────────────────────
+function _resolveDeleteCtx(){
+  var ctx=S.cardCtx; if(!ctx||ctx.isNew) return null;
+  var item=ctx.item, source=ctx.source;
+  // Backlog items projected in planner open as 'rotina_blk' with _isBacklog
+  if(source==='rotina_blk'){
+    source = item._isBacklog ? 'backlog' : 'rotina';
+  }
+  // Effective ID: backlog items use _rId as the real backlog ID
+  var effectiveId = (source==='backlog' && item._isBacklog) ? item._rId
+                  : (source==='rotina'  && item._rId)       ? item._rId
+                  : item.id;
+  return {item:item, source:source, effectiveId:effectiveId};
+}
+
+function deleteCardPrompt(){
+  var r=_resolveDeleteCtx(); if(!r) return;
+  var item=r.item, source=r.source;
+  var titulo=(item.titulo||item.texto||item.id)||'este item';
+  var isRotina=source==='rotina';
+  var canArchive=(source==='backlog'||source==='rotina');
+
+  var titleEl=document.getElementById('delete-item-title');
+  var warnEl=document.getElementById('delete-rotina-warn');
+  var inp=document.getElementById('delete-confirm-input');
+  var btn=document.getElementById('delete-confirm-btn');
+  var archBtn=document.getElementById('delete-archive-btn');
+
+  if(titleEl) titleEl.textContent=titulo;
+  if(warnEl)  warnEl.style.display=isRotina?'':'none';
+  if(inp)    { inp.value=''; inp.classList.remove('valid'); }
+  if(btn)     btn.disabled=true;
+  if(archBtn) archBtn.style.display=canArchive?'':'none';
+
+  document.getElementById('delete-overlay').classList.add('open');
+  setTimeout(function(){if(inp) inp.focus();},80);
+}
+
+function onDeleteInput(val){
+  var ok=(val.trim().toLowerCase()==='excluir');
+  var btn=document.getElementById('delete-confirm-btn');
+  var inp=document.getElementById('delete-confirm-input');
+  if(btn) btn.disabled=!ok;
+  if(inp) inp.classList.toggle('valid',ok);
+}
+
+function closeDeleteModal(){
+  document.getElementById('delete-overlay').classList.remove('open');
+}
+
+async function confirmDeleteCard(){
+  var inp=document.getElementById('delete-confirm-input');
+  if(!inp||inp.value.trim().toLowerCase()!=='excluir') return;
+  var r=_resolveDeleteCtx(); if(!r) return;
+  var item=r.item, source=r.source, id=r.effectiveId;
+
+  closeDeleteModal();
+  closeCardModal();
+
+  if(source==='rotina'){
+    await api('DELETE','/api/rotina/'+id);
+    S.rotina=S.rotina.filter(function(x){return x.id!==id;});
+  } else if(source==='backlog'){
+    await api('DELETE','/api/backlog/'+id);
+    S.backlog=S.backlog.filter(function(x){return x.id!==id;});
+  } else if(source==='semana'){
+    await api('DELETE','/api/semanas/'+S.weekKey+'/item/'+id);
+  } else if(source==='imprevisto'){
+    await api('DELETE','/api/imprevistos/'+id);
+    S.imprevistos=S.imprevistos.filter(function(x){return x.id!==id;});
+  }
+
+  await renderPlanner();
+  siteAlert('🗑️ Item excluído.');
+}
+
+async function confirmArchiveCard(){
+  var r=_resolveDeleteCtx(); if(!r) return;
+  var source=r.source, id=r.effectiveId;
+  if(source!=='backlog'&&source!=='rotina') return;
+
+  closeDeleteModal();
+  closeCardModal();
+
+  if(source==='rotina'){
+    await api('PUT','/api/rotina/'+id+'/arquivar');
+    S.rotina=S.rotina.filter(function(x){return x.id!==id;});
+  } else if(source==='backlog'){
+    await api('PUT','/api/backlog/'+id+'/arquivar');
+    S.backlog=S.backlog.filter(function(x){return x.id!==id;});
+  }
+
+  await renderPlanner();
+  siteAlert('📦 Item arquivado.');
 }
 
 async function saveOverride(){
