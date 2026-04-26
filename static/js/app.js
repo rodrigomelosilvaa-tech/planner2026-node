@@ -716,6 +716,28 @@ function buildGrade() {
         }), key));
       });
 
+      // Rotinas injetadas (movidas de outro dia via drag cross-day)
+      Object.keys(S.rotinaOverrides).forEach(function(ovKey){
+        var ov=S.rotinaOverrides[ovKey];
+        if(!ov._injected) return;
+        var li=ovKey.lastIndexOf('_');
+        var rId=ovKey.substring(0,li);
+        var ovDay=parseInt(ovKey.substring(li+1));
+        if(ovDay!==d) return;
+        var it=S.rotina.find(function(r){return r.id===rId;});
+        if(!it) return;
+        var efHorario=ov.horario||it.horario;
+        if(findSlot(efHorario)!==time) return;
+        var state=S.rotinaDone[ovKey];
+        if(state==='removed') return;
+        cell.appendChild(makeBlk(Object.assign({},it,ov,{
+          id:ovKey,done:state==='done'||it.concluido,
+          _isRotina:true,_rId:it.id,_day:d,
+          _hasOverride:true,_overrideFields:ov,
+          _extConflict:hasExtConflict(efHorario,it.horario_fim,dayISO)
+        }),key));
+      });
+
       // Backlog agendado no planner (execução única com horário)
       S.backlog.filter(function(b){
         return !b.concluido && findSlot(b.horario)===time && itemAtivoNoSlot(b, d, S.weekKey);
@@ -837,7 +859,8 @@ function getDepAlerts(vinculos){
 function makeBlk(item, cellKey) {
   var div=document.createElement('div');
   var color=catColor(item.categoria_id);
-  div.className='blk'+(item.done?' is-done':'')+' draggable-blk'+(item._hasOverride?' has-override':'');
+  var urgClass = (!item.done && item.urgencia && item.urgencia!=='m') ? ' urg-'+item.urgencia : '';
+  div.className='blk'+(item.done?' is-done':'')+' draggable-blk'+(item._hasOverride?' has-override':'')+urgClass;
   div.style.background=color+'1a';
   div.style.borderLeftColor=color;
   var cl=item.checklist||[]; var clDone=cl.filter(function(x){return x.done;}).length;
@@ -1003,11 +1026,28 @@ async function dropItem(drag,toKey,toTime){
     await api('PUT','/api/backlog/'+item._rId,patchBL);
     buildBLMini();
   } else if(item._isRotina && !item._isBacklog){
-    // Override de horário para este dia — não cria card avulso
-    var ovKey=item._rId+'_'+item._day;
-    var ovRes=await api('POST','/api/semanas/'+S.weekKey+'/override',{key:ovKey,fields:{horario:toTime}});
-    if(ovRes&&ovRes.ok){
-      S.rotinaOverrides[ovKey]=Object.assign(S.rotinaOverrides[ovKey]||{},{horario:toTime});
+    var fromDay=item._day;
+    var toDay=parseInt(toKey.split('_')[0]);
+    if(fromDay===toDay){
+      // Mesmo dia, horário diferente → override de horário
+      var ovKey=item._rId+'_'+fromDay;
+      var ovRes=await api('POST','/api/semanas/'+S.weekKey+'/override',{key:ovKey,fields:{horario:toTime}});
+      if(ovRes&&ovRes.ok) S.rotinaOverrides[ovKey]=Object.assign(S.rotinaOverrides[ovKey]||{},{horario:toTime});
+    } else {
+      // Dia diferente → remove do dia original + injeta no novo dia
+      var doneKey=item._rId+'_'+fromDay;
+      S.rotinaDone[doneKey]='removed';
+      await api('POST','/api/rotina_done/'+S.weekKey,S.rotinaDone);
+      var injKey=item._rId+'_'+toDay;
+      var injHorario=toTime||item.horario||'09:00';
+      var injRes=await api('POST','/api/semanas/'+S.weekKey+'/override',{
+        key:injKey, fields:{horario:injHorario,_injected:1,_fromDay:fromDay}
+      });
+      if(injRes&&injRes.ok){
+        S.rotinaOverrides[injKey]=Object.assign(S.rotinaOverrides[injKey]||{},{
+          horario:injHorario,_injected:1,_fromDay:fromDay
+        });
+      }
     }
   } else {
     var moved=await api('POST','/api/semanas/'+S.weekKey+'/move',{from_key:fromKey,to_key:toKey,item_id:item.id});
@@ -1034,8 +1074,9 @@ function buildBLMini(){
   var fw=document.getElementById('pr-filter'), lw=document.getElementById('pr-bl-list');
   if(!fw||!lw) return;
   fw.innerHTML='';
+  var filterActive=S.blWeekOnly||(S.blFilter&&S.blFilter!=='all');
   var tog=document.createElement('button');
-  tog.className='filter-btn'+(S.blWeekOnly?' active':'');
+  tog.className='filter-btn'+(S.blWeekOnly?' active filter-on':'');
   tog.textContent=S.blWeekOnly?'📅 Esta sem.':'📅 Todos';
   tog.onclick=function(){S.blWeekOnly=!S.blWeekOnly;buildBLMini();};
   fw.appendChild(tog);
@@ -1045,7 +1086,8 @@ function buildBLMini(){
 }
 function mkFBtn(lbl,val){
   var btn=document.createElement('button');
-  btn.className='filter-btn'+(S.blFilter===val?' active':'');
+  var isActive=S.blFilter===val;
+  btn.className='filter-btn'+(isActive?' active':'')+(isActive&&val!=='all'?' filter-on':'');
   btn.textContent=lbl;
   btn.onclick=function(){S.blFilter=val;buildBLMini();};
   return btn;
@@ -1066,7 +1108,11 @@ function renderBLMiniList(wrap){
     if(a.prazo&&b.prazo) return new Date(a.prazo)-new Date(b.prazo);
     return a.prazo?-1:b.prazo?1:0;
   });
-  if(!tasks.length){wrap.innerHTML='<div class="pr-empty">Nenhuma tarefa</div>';return;}
+  if(!tasks.length){
+    var emptyMsg=filterActive?'Nenhum item com este filtro':'Nenhuma tarefa no To Do';
+    wrap.innerHTML='<div class="ui-empty"><div class="ui-empty-icon">☑️</div><div class="ui-empty-msg">'+emptyMsg+'</div></div>';
+    return;
+  }
   var uL={h:'Urgente',m:'Normal',l:'Baixo'};
   tasks.forEach(function(task){
     var cat=getCat(task.categoria_id), noPrazo=!task.prazo;
@@ -1121,7 +1167,7 @@ function buildRotMini(){
     wrap.appendChild(el);
   });
   if(!ativos.length)
-    wrap.innerHTML='<div class="pr-empty">Nenhuma rotina ativa hoje</div>';
+    wrap.innerHTML='<div class="ui-empty"><div class="ui-empty-icon">🔄</div><div class="ui-empty-msg">Nenhuma rotina ativa hoje</div></div>';
 }
 
 // ── IMP MINI ──────────────────────────────────
@@ -1140,7 +1186,7 @@ function buildImpMini(){
     +'</div>';
   listEl.innerHTML='';
   var pending=S.imprevistos.filter(function(i){return !i.resolvido;}).slice(0,8);
-  if(!pending.length){listEl.innerHTML='<div class="pr-empty">Nenhum imprevisto aberto ✓</div>';return;}
+  if(!pending.length){listEl.innerHTML='<div class="ui-empty"><div class="ui-empty-icon">✅</div><div class="ui-empty-msg">Nenhum imprevisto aberto</div></div>';return;}
   pending.forEach(function(imp){
     var el=document.createElement('div'); el.className='imp-mini-item';
     var vincStr='';
@@ -1222,7 +1268,7 @@ function buildStats(){
       +'<div class="stat-bar"><div class="stat-fill" style="width:'+pct+'%;background:'+c.cor+'"></div></div>'
       +'<div class="stat-pct">'+c.done+'/'+c.total+'</div></div>';
   });
-  if(!hasAny) wrap.innerHTML+='<div class="pr-empty">Sem dados para exibir esta semana</div>';
+  if(!hasAny) wrap.innerHTML+='<div class="ui-empty"><div class="ui-empty-icon">📊</div><div class="ui-empty-msg">Sem dados para exibir esta semana</div></div>';
 }
 
 // ── CARD MODAL ────────────────────────────────
@@ -1284,14 +1330,26 @@ function openCardModal(item, source, cellKey, defaultTime, dayIndex) {
   } else {
     var editItem = item;
     if(source==='rotina_blk' && item._rId){
-      var rOrig = S.rotina.find(function(r){return r.id===item._rId;});
-      if(rOrig){
-        editItem = Object.assign({}, rOrig, {
-          _isRotina:true, _rId:item._rId, _day:item._day,
-          _hasOverride:item._hasOverride||false,
-          done:item.done, id:rOrig.id
-        });
-        source='rotina';
+      if(item._isBacklog){
+        // Backlog item projetado no planner — resolve o registro real em S.backlog
+        var bOrig=S.backlog.find(function(b){return b.id===item._rId;});
+        if(bOrig){
+          editItem=Object.assign({},bOrig,{
+            _isRotina:true,_isBacklog:true,_rId:item._rId,_day:item._day,
+            done:item.done,id:bOrig.id
+          });
+          source='backlog';
+        }
+      } else {
+        var rOrig=S.rotina.find(function(r){return r.id===item._rId;});
+        if(rOrig){
+          editItem=Object.assign({},rOrig,{
+            _isRotina:true,_rId:item._rId,_day:item._day,
+            _hasOverride:item._hasOverride||false,
+            done:item.done,id:rOrig.id
+          });
+          source='rotina';
+        }
       }
     }
     document.getElementById('cm-id').textContent = editItem.id || (editItem._rId||'');
@@ -1342,7 +1400,7 @@ function openCardModal(item, source, cellKey, defaultTime, dayIndex) {
 
   // Gerar rodapé dinamicamente
   var foot = document.getElementById('cm-foot');
-  var isRotinaInstance = !isNew && source==='rotina' && item._isRotina && (item._day !== undefined);
+  var isRotinaInstance = !isNew && source==='rotina' && item._isRotina && !item._isBacklog && (item._day !== undefined);
   var delBtn = isNew ? '' : '<button class="cm-delete-btn" onclick="deleteCardPrompt()" title="Excluir este item">🗑️ Excluir</button>';
   if(foot){
     if(isRotinaInstance){
@@ -1489,18 +1547,23 @@ async function saveOverride(){
   var r=S.rotina.find(function(x){return x.id===item._rId;});
   if(!r) return;
   var fields={};
-  var hor=(document.getElementById('cm-horario')||{}).value||null;
+  var hor=(document.getElementById('cm-horario')||{}).value||'';
+  var horFim=(document.getElementById('cm-horario-fim')||{}).value||'';
   var cat=(document.getElementById('cm-cat')||{}).value||null;
-  if(hor && hor!==r.horario)       fields.horario=hor;
-  if(cat && cat!==r.categoria_id)  fields.categoria_id=cat;
-  if(!Object.keys(fields).length){ closeCardModal(); return; }
+  if(hor!==(r.horario||''))          fields.horario=hor||null;
+  if(horFim!==(r.horario_fim||''))   fields.horario_fim=horFim||null;
+  if(cat && cat!==r.categoria_id)    fields.categoria_id=cat;
+  if(!Object.keys(fields).length){
+    toast('Nenhuma alteração detectada para esta ocorrência','info',2500);
+    closeCardModal(); return;
+  }
   var ovKey=item._rId+'_'+item._day;
   var res=await api('POST','/api/semanas/'+S.weekKey+'/override',{key:ovKey,fields:fields});
   if(res&&res.ok){
     S.rotinaOverrides[ovKey]=Object.assign(S.rotinaOverrides[ovKey]||{},fields);
     buildGrade();
-    var msg=document.getElementById('cm-saved-msg');
-    if(msg){msg.textContent='✅ Ajuste salvo para esta ocorrência';setTimeout(function(){closeCardModal();},900);}
+    toast('✅ Ajuste salvo só para esta ocorrência','success',2500);
+    closeCardModal();
   }
 }
 
@@ -1591,7 +1654,16 @@ function updateDuracao() {
 async function saveCardModal(){
   var ctx=S.cardCtx; if(!ctx) return;
   var titulo=document.getElementById('cm-title').value.trim();
-  if(!titulo){siteAlert('Digite o título');return;}
+  if(!titulo){
+    var ti=document.getElementById('cm-title');
+    if(ti){ti.style.outline='2px solid #e74c3c';ti.focus();setTimeout(function(){ti.style.outline='';},1800);}
+    toast('Digite o título do item','error',2500);
+    return;
+  }
+  var _savBtn=document.querySelector('#cm-foot .btn-p');
+  if(_savBtn){_savBtn._orig=_savBtn.textContent;_savBtn.textContent='⏳ Salvando…';_savBtn.classList.add('btn-saving');}
+  var _restoreBtn=function(){if(_savBtn){_savBtn.textContent=_savBtn._orig||'💾 Salvar';_savBtn.classList.remove('btn-saving');}};
+  try{
   var cat=document.getElementById('cm-cat').value;
   var tipo=document.getElementById('cm-tipo').value;
   var urg=document.getElementById('cm-urg').value;
@@ -1730,7 +1802,9 @@ async function saveCardModal(){
   if(S.page==='kanban') renderKanban();
   updateBadges();
   buildStats();
+  toast('💾 Salvo com sucesso','success',2000);
   closeCardModal();
+  }catch(e){ _restoreBtn(); throw e; }
 }
 
 // ── CHECKLIST ─────────────────────────────────
@@ -3126,8 +3200,39 @@ function showDialog(title, msg, defaultVal, isConfirm, callback) {
   };
 }
 
+// ── TOAST SYSTEM ──────────────────────────────
+function toast(msg, type, duration){
+  var container=document.getElementById('toast-container');
+  if(!container){
+    container=document.createElement('div');
+    container.id='toast-container';
+    document.body.appendChild(container);
+  }
+  var t=document.createElement('div');
+  t.className='toast toast-'+(type||'info');
+  t.textContent=msg;
+  var dismiss=function(){
+    t.classList.remove('toast-show');
+    setTimeout(function(){if(t.parentNode) t.remove();},300);
+  };
+  t.onclick=dismiss;
+  container.appendChild(t);
+  requestAnimationFrame(function(){
+    requestAnimationFrame(function(){ t.classList.add('toast-show'); });
+  });
+  setTimeout(dismiss, duration||3800);
+}
+
 window.siteAlert = function(msg) {
-  console.log('[siteAlert]', msg);
+  // Mensagens de notificação → toast não-bloqueante
+  if(/^[\u{2705}\u{274C}\u{1F4E6}\u{1F5D1}⚠ℹ✔\u{1F504}\u{1F4BE}]/u.test(msg) || msg.startsWith('✅') || msg.startsWith('❌') || msg.startsWith('📦') || msg.startsWith('🗑') || msg.startsWith('⚠️') || msg.startsWith('⚙️') || msg.startsWith('💾')){
+    var type='info';
+    if(msg.startsWith('✅')||msg.startsWith('💾')) type='success';
+    else if(msg.startsWith('❌')) type='error';
+    else if(msg.startsWith('⚠️')||msg.startsWith('🗑')) type='warn';
+    toast(msg,type);
+    return Promise.resolve();
+  }
   return new Promise(function(resolve){ showDialog('Aviso', msg, null, false, function(){ resolve(); }); });
 };
 window.siteConfirm = function(msg) {
@@ -5084,7 +5189,7 @@ async function loadCardHistory(itemId, itemTipo) {
   wrap.innerHTML='<div class="hist-loading">Carregando...</div>';
   var rows=await api('GET','/api/historico/'+encodeURIComponent(itemTipo)+'/'+encodeURIComponent(itemId));
   if(!rows||!rows.length){
-    wrap.innerHTML='<div class="hist-empty">Nenhum histórico registrado.</div>';
+    wrap.innerHTML='<div class="ui-empty"><div class="ui-empty-icon">🕐</div><div class="ui-empty-msg">Nenhum histórico registrado ainda</div></div>';
     return;
   }
   wrap.innerHTML=rows.map(function(r){
