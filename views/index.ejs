@@ -236,63 +236,111 @@
 
     <!-- REVISÃO -->
     <div class="page" id="page-revisao">
-      <div class="page-inner" style="max-width:900px">
-        <div class="rev-header" id="rev-header">
-          <div style="font-family:var(--font-m);font-size:9px;color:var(--text3);letter-spacing:2px;text-transform:uppercase">Revisão Semanal</div>
-          <div style="font-size:22px;font-weight:600;margin-top:4px" id="rev-week-lbl">—</div>
-        </div>
-        <!-- Stats -->
-        <div class="rev-section">
-          <div class="rev-section-title">📊 Progresso da Semana</div>
-          <div id="rev-stats-grid"></div>
-        </div>
-        <!-- Reflexão -->
-        <div class="rev-section">
-          <div class="rev-section-title">📝 Reflexão</div>
-          <div id="rev-form"></div>
-          <button class="btn-p" style="width:100%;padding:11px;margin-top:8px" onclick="saveRevisao()">💾 Salvar Reflexão</button>
-          <div id="rev-saved-msg" style="font-family:var(--font-m);font-size:9px;color:var(--green);margin-top:6px;text-align:center"></div>
-        </div>
-        <!-- Planos de ação -->
-        <div class="rev-section">
-          <div class="rev-section-title" style="display:flex;align-items:center;justify-content:space-between">
-            <span>🎯 Planos de Ação</span>
-            <button class="btn-p" style="font-size:10px;padding:6px 14px" onclick="openNovoPlano()">+ Novo Plano</button>
-          </div>
-          <div id="rev-planos-list"></div>
-          <!-- Form inline novo plano -->
-          <div id="rev-plano-form" style="display:none;background:var(--bg3);border-radius:8px;padding:14px;margin-top:10px">
-            <div class="mrow">
-              <div class="mf" style="flex:2">
-                <label class="ml">Ação</label>
-                <input class="field-in" id="pf-titulo" placeholder="O que fazer?">
-              </div>
-              <div class="mf">
-                <label class="ml">Categoria</label>
-                <select class="field-sel" id="pf-cat"></select>
-              </div>
-            </div>
-            <div class="mrow">
-              <div class="mf">
-                <label class="ml">Prazo</label>
-                <input class="field-in" id="pf-prazo" type="date">
-              </div>
-              <div class="mf">
-                <label class="ml">Urgência</label>
-                <select class="field-sel" id="pf-urg">
-                  <option value="h">🔴 Urgente</option>
-                  <option value="m" selected>🟡 Normal</option>
-                  <option value="l">🟢 Baixo</option>
-                </select>
-              </div>
-            </div>
-            <div style="display:flex;gap:8px;margin-top:8px">
-              <button class="btn-p" style="flex:1" onclick="salvarPlano()">Salvar Plano</button>
-              <button class="btn-g" onclick="fecharNovoPlano()">Cancelar</button>
-              <button class="btn-d" style="font-size:10px" onclick="promoverParaBacklog()" title="Criar no To Do também">☑️ Promover p/ To Do</button>
-            </div>
+      <div class="rev-layout">
+        <!-- Coluna esquerda: histórico de revisões -->
+        <div class="rev-sidebar">
+          <div class="rev-sidebar-title">📋 Histórico</div>
+          <button class="rev-week-item rev-week-current" id="rev-current-btn" onclick="selectRevisaoWeek(null)">
+            <span class="rwi-label">Semana atual</span>
+            <span class="rwi-badge" id="rev-current-badge"></span>
+          </button>
+          <div id="rev-history-list">
+            <div style="color:var(--text3);font-size:10px;font-family:var(--font-m);padding:8px 4px">Carregando...</div>
           </div>
         </div>
+
+        <!-- Coluna central: conteúdo da revisão selecionada -->
+        <div class="rev-content">
+          <div class="rev-header" id="rev-header">
+            <div style="font-family:var(--font-m);font-size:9px;color:var(--text3);letter-spacing:2px;text-transform:uppercase">Revisão Semanal</div>
+            <div style="font-size:22px;font-weight:600;margin-top:4px" id="rev-week-lbl">—</div>
+          </div>
+          <!-- Stats -->
+          <div class="rev-section">
+            <div class="rev-section-title">📊 Progresso da Semana</div>
+            <div id="rev-stats-grid"></div>
+          </div>
+          <!-- Reflexão -->
+          <div class="rev-section">
+            <div class="rev-section-title">📝 Reflexão</div>
+            <div id="rev-form"></div>
+            <button class="btn-p" style="width:100%;padding:11px;margin-top:8px" id="rev-save-btn" onclick="saveRevisao()">💾 Salvar Reflexão</button>
+            <div id="rev-saved-msg" style="font-family:var(--font-m);font-size:9px;color:var(--green);margin-top:6px;text-align:center"></div>
+          </div>
+          <!-- Planos de ação -->
+          <div class="rev-section">
+            <div class="rev-section-title" style="display:flex;align-items:center;justify-content:space-between">
+              <span>🎯 Planos de Ação</span>
+              <button class="btn-p" style="font-size:10px;padding:6px 14px" id="rev-novo-plano-btn" onclick="openNovoPlano()">+ Novo Plano</button>
+            </div>
+            <div id="rev-planos-list"></div>
+            <!-- Form inline novo plano -->
+            <div id="rev-plano-form" style="display:none;background:var(--bg3);border-radius:8px;padding:14px;margin-top:10px">
+              <div class="mrow">
+                <div class="mf" style="flex:2">
+                  <label class="ml">Ação</label>
+                  <input class="field-in" id="pf-titulo" placeholder="O que fazer?">
+                </div>
+                <div class="mf">
+                  <label class="ml">Categoria</label>
+                  <select class="field-sel" id="pf-cat"></select>
+                </div>
+              </div>
+              <div class="mrow">
+                <div class="mf">
+                  <label class="ml">Prazo</label>
+                  <input class="field-in" id="pf-prazo" type="date">
+                </div>
+                <div class="mf">
+                  <label class="ml">Urgência</label>
+                  <select class="field-sel" id="pf-urg">
+                    <option value="h">🔴 Urgente</option>
+                    <option value="m" selected>🟡 Normal</option>
+                    <option value="l">🟢 Baixo</option>
+                  </select>
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:8px">
+                <button class="btn-p" style="flex:1" onclick="salvarPlano()">Salvar Plano</button>
+                <button class="btn-g" onclick="fecharNovoPlano()">Cancelar</button>
+                <button class="btn-d" style="font-size:10px" onclick="promoverParaBacklog()" title="Criar no To Do também">☑️ Promover p/ To Do</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Coluna direita: IA Analista -->
+        <div class="rev-ai-panel">
+          <div class="rev-ai-title">🧠 Análise com IA</div>
+          <div class="rev-ai-scope">
+            <div class="rev-ai-scope-lbl">Escopo da análise:</div>
+            <label class="rev-ai-radio">
+              <input type="radio" name="ai-scope" value="general" checked onchange="S.aiScope='general'"> Geral (últimas 12 semanas)
+            </label>
+            <label class="rev-ai-radio">
+              <input type="radio" name="ai-scope" value="week" onchange="S.aiScope='week'"> Semana selecionada
+            </label>
+          </div>
+          <button class="btn-p rev-ai-btn" onclick="analisarIA()">✨ Analisar com IA</button>
+          <div id="rev-ai-loading" style="display:none" class="rev-ai-loading">
+            <div class="rev-ai-spinner"></div>
+            <span>Analisando seus dados...</span>
+          </div>
+          <div id="rev-ai-result" class="rev-ai-result"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Popup de planos de ação no planner -->
+    <div id="planos-popup" class="planos-popup" style="display:none">
+      <div class="planos-popup-header">
+        <span>🎯 Planos de Ação Pendentes</span>
+        <button class="planos-popup-close" onclick="closePlanosPopup()">✕</button>
+      </div>
+      <div id="planos-popup-list" class="planos-popup-list"></div>
+      <div class="planos-popup-foot">
+        <button class="btn-p" style="font-size:10px;padding:5px 12px" onclick="goTo('revisao')">Ver Revisão</button>
+        <button class="btn-g" style="font-size:10px;padding:5px 12px" onclick="dismissPlanosPopup()">Dispensar por hoje</button>
       </div>
     </div>
 

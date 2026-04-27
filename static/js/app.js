@@ -10,7 +10,8 @@ var S = {
   mscal: { connected: false, calendars: [], selectedIds: [], events: [] },
   calBulkDone: {}, // rotinaDone por semana para o calendário
   blFilter: 'all', blWeekOnly: false,
-  revisao: {}, drag: null, weekKey: '',
+  revisao: {}, revisaoWeekKey: null, aiScope: 'general',
+  drag: null, weekKey: '',
   cardCtx: null,
   kanbanCols: [],
   canvasBoards: [],
@@ -507,6 +508,7 @@ async function renderPlanner() {
   buildGrade();
   buildBLMini();
   loadExternalCals(); // async, re-renders when done
+  checkPlanosPopup(); // mostra popup de planos pendentes se houver
 }
 
 function makeAlldayItem(it, source, dayIdx) {
@@ -2403,20 +2405,98 @@ async function addImpPg(){
 
 // ── REVISÃO ───────────────────────────────────
 async function renderRevisao(){
-  await loadSemana(); // garantir dados atualizados
-  var rev=await api('GET','/api/revisoes/'+S.weekKey)||{};
-  S.revisao=rev;
+  await loadSemana();
+  var targetWk = S.revisaoWeekKey || S.weekKey;
+  var aiWk     = S.aiScope==='general' ? '_geral' : targetWk;
+  var results = await Promise.all([
+    api('GET','/api/revisoes/'+targetWk),
+    api('GET','/api/revisoes'),
+    api('GET','/api/revisoes/analise?wk='+aiWk)
+  ]);
+  var rev   = results[0] || {};
+  var lista = results[1] || [];
+  var aiSaved = results[2] && results[2].analise_ia ? results[2].analise_ia : null;
+  S.revisao = rev;
 
-  // Label da semana
-  var dates=getWeekDates();
+  buildRevisaoHistory(lista, targetWk);
+  renderRevisaoWeek(targetWk, rev);
+
+  var pfCat=document.getElementById('pf-cat');
+  if(pfCat){
+    pfCat.innerHTML=S.categorias.map(function(c){return '<option value="'+c.id+'">'+c.icone+' '+c.nome+'</option>';}).join('');
+  }
+  var pfPrazo=document.getElementById('pf-prazo');
+  if(pfPrazo&&!pfPrazo.value) pfPrazo.value=localDateISO(getWeekDates(1)[0]);
+
+  // Mostrar análise salva se existir
+  renderAnaliseIA(aiSaved);
+}
+
+function buildRevisaoHistory(lista, selectedWk){
+  var hist=document.getElementById('rev-history-list');
+  if(!hist) return;
+  // Badge da semana atual
+  var curBadge=document.getElementById('rev-current-badge');
+  var curItem=lista.find(function(r){return r.week_key===S.weekKey;});
+  if(curBadge) curBadge.textContent=curItem&&curItem.planos_ativos?curItem.planos_ativos+'':'' ;
+  // Marcar botão semana atual como ativo
+  var curBtn=document.getElementById('rev-current-btn');
+  if(curBtn) curBtn.classList.toggle('active', !S.revisaoWeekKey || S.revisaoWeekKey===S.weekKey);
+
+  // Filtrar semanas anteriores (excluir semana atual)
+  var anteriores=lista.filter(function(r){return r.week_key!==S.weekKey;});
+  if(!anteriores.length){
+    hist.innerHTML='<div style="color:var(--text3);font-size:10px;font-family:var(--font-m);padding:8px 4px">Nenhuma revisão anterior.</div>';
+    return;
+  }
+  hist.innerHTML=anteriores.map(function(r){
+    var d=new Date(r.week_key+'T12:00');
+    var lbl=d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'});
+    var isActive=r.week_key===selectedWk && S.revisaoWeekKey;
+    return '<button class="rev-week-item'+(isActive?' active':'')+'" onclick="selectRevisaoWeek(\''+r.week_key+'\')">'
+      +'<span class="rwi-label">'+lbl+'</span>'
+      +(r.planos_ativos?'<span class="rwi-badge">'+r.planos_ativos+'</span>':'')
+      +'</button>';
+  }).join('');
+}
+
+async function selectRevisaoWeek(wk){
+  S.revisaoWeekKey = wk;
+  var targetWk = wk || S.weekKey;
+  var aiWk     = S.aiScope==='general' ? '_geral' : targetWk;
+  var results = await Promise.all([
+    api('GET','/api/revisoes/'+targetWk),
+    api('GET','/api/revisoes/analise?wk='+aiWk)
+  ]);
+  S.revisao = results[0] || {};
+  var aiSaved = results[1] && results[1].analise_ia ? results[1].analise_ia : null;
+
+  document.querySelectorAll('.rev-week-item').forEach(function(btn){btn.classList.remove('active');});
+  var curBtn=document.getElementById('rev-current-btn');
+  if(!wk && curBtn) curBtn.classList.add('active');
+
+  renderRevisaoWeek(targetWk, S.revisao);
+  renderAnaliseIA(aiSaved);
+}
+
+function renderRevisaoWeek(wk, rev){
+  // Label
+  var d0=new Date(wk+'T12:00');
+  var d6=new Date(d0); d6.setDate(d6.getDate()+6);
   var f=function(d){return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});};
   var lbl=document.getElementById('rev-week-lbl');
-  if(lbl) lbl.textContent='Semana '+getWeekNum(dates[0])+' · '+f(dates[0])+' – '+f(dates[6]);
+  var wnum=getWeekNum(d0);
+  if(lbl) lbl.textContent='Semana '+wnum+' · '+f(d0)+' – '+f(d6);
 
-  // Stats grid
-  buildRevStats();
+  // Stats (só para semana atual com dados carregados)
+  if(wk===S.weekKey) buildRevStats();
+  else {
+    var sg=document.getElementById('rev-stats-grid');
+    if(sg) sg.innerHTML='<div style="color:var(--text3);font-size:10px;font-family:var(--font-m)">Estatísticas disponíveis apenas para a semana atual.</div>';
+  }
 
   // Reflexão
+  var isCurrentWk = wk===S.weekKey;
   var form=document.getElementById('rev-form'); if(!form) return;
   var qs=[
     {key:'fez',lbl:'✅ O que executei esta semana?'},
@@ -2426,21 +2506,23 @@ async function renderRevisao(){
     {key:'kr', lbl:'🎯 Os OKRs ainda fazem sentido? Ajuste necessário?'}
   ];
   form.innerHTML=qs.map(function(q){
+    var val=rev[q.key]||'';
+    if(!isCurrentWk && !val) return '<div class="rev-q"><div class="rev-ql">'+q.lbl+'</div><div style="color:var(--text3);font-size:10px;font-family:var(--font-m);padding:6px 0">—</div></div>';
     return '<div class="rev-q"><div class="rev-ql">'+q.lbl+'</div>'
-      +'<textarea class="field-ta rev-ta" id="rq-'+q.key+'" rows="3" placeholder="...">'+(rev[q.key]||'')+'</textarea></div>';
+      +(isCurrentWk
+        ? '<textarea class="field-ta rev-ta" id="rq-'+q.key+'" rows="3" placeholder="...">'+val+'</textarea>'
+        : '<div class="rev-readonly-txt">'+(val||'<em style="opacity:.5">Não preenchido</em>')+'</div>')
+      +'</div>';
   }).join('');
 
-  // Planos de ação
-  buildPlanosAcao(rev.planos_acao||[]);
+  // Mostrar/ocultar botão salvar e "novo plano" conforme editable
+  var saveBtn=document.getElementById('rev-save-btn');
+  var novoPBtn=document.getElementById('rev-novo-plano-btn');
+  if(saveBtn) saveBtn.style.display=isCurrentWk?'':'none';
+  if(novoPBtn) novoPBtn.style.display=isCurrentWk?'':'none';
 
-  // Preencher categorias no form de plano
-  var pfCat=document.getElementById('pf-cat');
-  if(pfCat){
-    pfCat.innerHTML=S.categorias.map(function(c){return '<option value="'+c.id+'">'+c.icone+' '+c.nome+'</option>';}).join('');
-  }
-  // Default prazo = próxima segunda
-  var pfPrazo=document.getElementById('pf-prazo');
-  if(pfPrazo&&!pfPrazo.value) pfPrazo.value=localDateISO(getWeekDates(1)[0]);
+  // Planos de ação
+  buildPlanosAcao(rev.planos_acao||[], wk, isCurrentWk);
 }
 
 function buildRevStats(){
@@ -2500,15 +2582,19 @@ async function saveRevisao(){
     var el=document.getElementById('rq-'+k);
     d[k]=el?el.value:'';
   });
-  // Preservar planos_acao
   if(S.revisao.planos_acao) d.planos_acao=S.revisao.planos_acao;
   await api('POST','/api/revisoes/'+S.weekKey,d);
   S.revisao=Object.assign(S.revisao,d);
   var msg=document.getElementById('rev-saved-msg');
   if(msg){msg.textContent='✅ Reflexão salva!';setTimeout(function(){msg.textContent='';},3000);}
+  // Atualizar badge no histórico
+  var lista=await api('GET','/api/revisoes')||[];
+  buildRevisaoHistory(lista, S.weekKey);
 }
 
-function buildPlanosAcao(planos){
+function buildPlanosAcao(planos, wk, isEditable){
+  if(wk===undefined) wk=S.weekKey;
+  if(isEditable===undefined) isEditable=true;
   var wrap=document.getElementById('rev-planos-list'); if(!wrap) return;
   wrap.innerHTML='';
   if(!planos.length){
@@ -2530,20 +2616,22 @@ function buildPlanosAcao(planos){
       +(p.promovido?'<span style="font-family:var(--font-m);font-size:9px;color:var(--green)">📌 no backlog</span>':'')
       +'</div>'
       +'</div>'
-      +'<button class="btn-d plano-del" style="font-size:9px;padding:4px 8px">✕</button>';
-    el.querySelector('.plano-ck').onclick=async function(){
-      p.concluido=!p.concluido;
-      await api('PUT','/api/revisoes/'+S.weekKey+'/plano/'+p.id,{concluido:p.concluido});
-      el.classList.toggle('concluido',p.concluido);
-      el.querySelector('.plano-ck').classList.toggle('done',p.concluido);
-    };
-    el.querySelector('.plano-del').onclick=async function(e){
-      e.stopPropagation();
-      if(!await siteConfirm('Excluir plano?')) return;
-      await api('DELETE','/api/revisoes/'+S.weekKey+'/plano/'+p.id);
-      S.revisao.planos_acao=(S.revisao.planos_acao||[]).filter(function(x){return x.id!==p.id;});
-      buildPlanosAcao(S.revisao.planos_acao||[]);
-    };
+      +(isEditable?'<button class="btn-d plano-del" style="font-size:9px;padding:4px 8px">✕</button>':'');
+    if(isEditable){
+      el.querySelector('.plano-ck').onclick=async function(){
+        p.concluido=!p.concluido;
+        await api('PUT','/api/revisoes/'+wk+'/plano/'+p.id,{concluido:p.concluido});
+        el.classList.toggle('concluido',p.concluido);
+        el.querySelector('.plano-ck').classList.toggle('done',p.concluido);
+      };
+      el.querySelector('.plano-del').onclick=async function(e){
+        e.stopPropagation();
+        if(!await siteConfirm('Excluir plano?')) return;
+        await api('DELETE','/api/revisoes/'+wk+'/plano/'+p.id);
+        S.revisao.planos_acao=(S.revisao.planos_acao||[]).filter(function(x){return x.id!==p.id;});
+        buildPlanosAcao(S.revisao.planos_acao||[], wk, isEditable);
+      };
+    }
     wrap.appendChild(el);
   });
 }
@@ -2592,6 +2680,100 @@ async function promoverParaBacklog(){
     fecharNovoPlano();
     updateBadges();
   }
+}
+
+// ── ANÁLISE DE IA ─────────────────────────────
+function renderAnaliseIA(saved){
+  var result=document.getElementById('rev-ai-result');
+  if(!result) return;
+  if(!saved){result.innerHTML='';return;}
+  var dt=saved.gerado_em?new Date(saved.gerado_em).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'';
+  var scopeLbl=saved.scope==='general'?'Geral':'Semana específica';
+  result.innerHTML='<div class="rev-ai-meta">'+scopeLbl+(dt?' · '+dt:'')
+    +' <button class="rev-ai-regen" onclick="analisarIA(true)" title="Gerar nova análise">↺ Regerar</button></div>'
+    +'<div class="rev-ai-text">'+markdownToHtml(saved.text)+'</div>';
+}
+
+async function analisarIA(force){
+  var scope = S.aiScope || 'general';
+  var aiWk  = scope==='general' ? '_geral' : (S.revisaoWeekKey||S.weekKey);
+  var weekKeys = scope==='week' ? [S.revisaoWeekKey||S.weekKey] : null;
+
+  // Se não forçar, verificar se já tem análise salva
+  if(!force){
+    var saved=await api('GET','/api/revisoes/analise?wk='+aiWk);
+    if(saved&&saved.analise_ia){
+      renderAnaliseIA(saved.analise_ia);
+      return;
+    }
+  }
+
+  var loading=document.getElementById('rev-ai-loading');
+  var result=document.getElementById('rev-ai-result');
+  var btn=document.querySelector('.rev-ai-btn');
+  if(loading) loading.style.display='flex';
+  if(result) result.innerHTML='';
+  if(btn){btn.disabled=true;btn.textContent='⏳ Analisando...';}
+  try{
+    var res=await api('POST','/api/revisoes/analyze',{scope:scope,weekKeys:weekKeys});
+    if(res&&res.analysis){
+      renderAnaliseIA({text:res.analysis,gerado_em:new Date().toISOString(),scope:scope});
+    } else if(res){
+      if(result) result.innerHTML='<div style="color:var(--red);font-size:11px">'+(res.error||'Erro desconhecido')+'</div>';
+    }
+  }catch(e){
+    if(result) result.innerHTML='<div style="color:var(--red);font-size:11px">Erro ao gerar análise.</div>';
+  }finally{
+    if(loading) loading.style.display='none';
+    if(btn){btn.disabled=false;btn.textContent='✨ Analisar com IA';}
+  }
+}
+
+function markdownToHtml(text){
+  return text
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g,'<em>$1</em>')
+    .replace(/#{1,3} (.+)/g,'<div class="rev-ai-h">$1</div>')
+    .replace(/\n- (.+)/g,'<li>$1</li>')
+    .replace(/(<li>.*<\/li>)/gs,'<ul>$1</ul>')
+    .replace(/\n\n/g,'</p><p>')
+    .replace(/\n/g,'<br>');
+}
+
+// ── PLANOS POPUP ──────────────────────────────
+var _planosPopupDismissed = false;
+
+async function checkPlanosPopup(){
+  if(_planosPopupDismissed) return;
+  var dismissed=localStorage.getItem('planos-popup-dismissed');
+  if(dismissed===new Date().toDateString()) return;
+  var ativos=await api('GET','/api/planos-ativos')||[];
+  if(!ativos.length) return;
+  var list=document.getElementById('planos-popup-list');
+  if(!list) return;
+  var uL={h:'🔴',m:'🟡',l:'🟢'};
+  list.innerHTML=ativos.slice(0,5).map(function(p){
+    return '<div class="popup-plano-item">'
+      +'<span class="popup-plano-urg">'+(uL[p.urgencia||'m'])+'</span>'
+      +'<span class="popup-plano-titulo">'+p.titulo+'</span>'
+      +(p.prazo?'<span class="popup-plano-prazo">'+formatDate(p.prazo)+'</span>':'')
+      +'</div>';
+  }).join('');
+  if(ativos.length>5) list.innerHTML+='<div style="color:var(--text3);font-size:10px;font-family:var(--font-m);padding:4px 0">...e mais '+(ativos.length-5)+' pendentes</div>';
+  var popup=document.getElementById('planos-popup');
+  if(popup) popup.style.display='flex';
+}
+
+function closePlanosPopup(){
+  var popup=document.getElementById('planos-popup');
+  if(popup) popup.style.display='none';
+}
+
+function dismissPlanosPopup(){
+  _planosPopupDismissed=true;
+  localStorage.setItem('planos-popup-dismissed',new Date().toDateString());
+  closePlanosPopup();
 }
 
 // ── CALENDÁRIO ────────────────────────────────

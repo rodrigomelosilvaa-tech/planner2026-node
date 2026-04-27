@@ -8,6 +8,7 @@ const bcrypt   = require('bcryptjs');
 const crypto   = require('crypto');
 const path     = require('path');
 const { createClient } = require('@libsql/client');
+const Anthropic = require('@anthropic-ai/sdk');
 
 // Carrega variáveis de ambiente do arquivo .env
 require('dotenv').config();
@@ -903,10 +904,146 @@ app.post('/api/imprevistos/:iid/comentario', requireLogin, async (req, res) => {
 });
 
 // ── REVISÃO ───────────────────────────────────
+
+// Lista todas as semanas com revisão salva (deve vir ANTES de /:wk)
+app.get('/api/revisoes', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  const rows = await dbAll(
+    "SELECT week_key, dados, planos_action FROM revisao WHERE user_id = ? ORDER BY week_key DESC",
+    [uid]
+  );
+  const result = rows.map(r => {
+    const d = parseJ(r.dados, {});
+    const planos = parseJ(r.planos_action, []);
+    const hasDados = !!(d.fez || d.nao || d.imp || d.mel || d.kr);
+    return {
+      week_key: r.week_key,
+      salvo_em: d.salvo_em || null,
+      has_data: hasDados,
+      planos_count: planos.length,
+      planos_ativos: planos.filter(p => !p.concluido).length
+    };
+  }).filter(r => r.has_data || r.planos_count > 0);
+  res.json(result);
+});
+
+// Buscar análise salva (scope=general → wk=_geral; scope=week → wk=weekKey)
+app.get('/api/revisoes/analise', requireLogin, async (req, res) => {
+  const uid  = req.session.userId;
+  const wk   = req.query.wk || '_geral';
+  const rec  = await dbGet('SELECT dados FROM revisao WHERE user_id = ? AND week_key = ?', [uid, wk]);
+  if (!rec) return res.json({ analise_ia: null });
+  const d = parseJ(rec.dados, {});
+  res.json({ analise_ia: d.analise_ia || null });
+});
+
+// Análise de IA (deve vir ANTES de /:wk para não ser capturado como wk='analyze')
+app.post('/api/revisoes/analyze', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  const { scope, weekKeys } = req.body;
+
+  try {
+    let revisaoRows = [];
+    if (scope === 'general') {
+      revisaoRows = await dbAll(
+        "SELECT week_key, dados, planos_action FROM revisao WHERE user_id = ? ORDER BY week_key DESC LIMIT 12",
+        [uid]
+      );
+    } else if (weekKeys && weekKeys.length > 0) {
+      const placeholders = weekKeys.map(() => '?').join(',');
+      revisaoRows = await dbAll(
+        `SELECT week_key, dados, planos_action FROM revisao WHERE user_id = ? AND week_key IN (${placeholders}) ORDER BY week_key DESC`,
+        [uid, ...weekKeys]
+      );
+    }
+
+    const rotinas = await dbAll("SELECT titulo, dias, horario FROM rotina WHERE user_id = ? AND (arquivado IS NULL OR arquivado=0)", [uid]);
+    const backlog = await dbAll("SELECT titulo, urgencia, prazo, concluido FROM backlog WHERE user_id = ? AND (arquivado IS NULL OR arquivado=0)", [uid]);
+    const pendentes = backlog.filter(b => !b.concluido).slice(0, 20);
+
+    const DIAS = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'];
+    const rotinasTexto = rotinas.map(r => {
+      const dias = parseJ(r.dias, []).map(d => DIAS[d] || d).join(', ');
+      return `- ${r.titulo} (${dias} às ${r.horario || '?'})`;
+    }).join('\n') || 'Nenhuma rotina cadastrada';
+
+    const backlogTexto = pendentes.map(b =>
+      `- ${b.titulo} [urg:${b.urgencia||'m'}${b.prazo?' prazo:'+b.prazo:''}]`
+    ).join('\n') || 'Nenhuma tarefa pendente';
+
+    let revisaoTexto = '';
+    for (const r of revisaoRows) {
+      const d = parseJ(r.dados, {});
+      const planos = parseJ(r.planos_action, []);
+      if (!d.fez && !d.nao && !d.imp && !d.mel && !planos.length) continue;
+      revisaoTexto += `\n\n=== Semana ${r.week_key} ===\n`;
+      if (d.fez) revisaoTexto += `O que executei: ${d.fez}\n`;
+      if (d.nao) revisaoTexto += `O que não consegui: ${d.nao}\n`;
+      if (d.imp) revisaoTexto += `Imprevistos: ${d.imp}\n`;
+      if (d.mel) revisaoTexto += `Melhorias planejadas: ${d.mel}\n`;
+      if (d.kr)  revisaoTexto += `OKRs: ${d.kr}\n`;
+      if (planos.length) {
+        revisaoTexto += `Planos de ação:\n`;
+        planos.forEach(p => {
+          revisaoTexto += `  - ${p.titulo} [${p.concluido?'concluído':'pendente'}${p.prazo?' prazo:'+p.prazo:''}]\n`;
+        });
+      }
+    }
+
+    if (!revisaoTexto.trim()) {
+      return res.json({ analysis: 'Não há dados de revisão suficientes para análise. Preencha ao menos uma revisão semanal primeiro.' });
+    }
+
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const message = await client.messages.create({
+      model: 'claude-opus-4-7',
+      max_tokens: 2048,
+      messages: [{
+        role: 'user',
+        content: `Você é um especialista em neuropsicologia, psicologia positiva e produtividade pessoal. Analise os dados de revisão semanal abaixo e forneça uma análise profunda e um plano de ação prático.
+
+ROTINAS CADASTRADAS:
+${rotinasTexto}
+
+TAREFAS PENDENTES (backlog):
+${backlogTexto}
+
+HISTÓRICO DE REVISÕES:
+${revisaoTexto}
+
+Por favor, forneça:
+1. **Análise dos Padrões** — O que está funcionando? Onde há recorrência de bloqueios? Que padrões comportamentais você observa?
+2. **Impacto Emocional e Cognitivo** — Como os imprevistos e não-conclusões estão afetando o sistema como um todo?
+3. **Recomendações Prioritárias** — 3-5 ajustes concretos na rotina, prioridade ou mentalidade para a próxima semana
+4. **Plano de Ação** — Liste 2-4 ações específicas e mensuráveis, com prazo sugerido (formato: Ação | Prazo | Por quê)
+5. **Palavra de Suporte** — Uma mensagem motivacional personalizada baseada no contexto
+
+Seja direto, empático e prático. Use linguagem acessível em português brasileiro.`
+      }]
+    });
+
+    const analysis = message.content[0]?.text || 'Erro ao gerar análise.';
+
+    // Salvar análise no banco para não recalcular
+    const saveWk = scope === 'general' ? '_geral' : (weekKeys && weekKeys[0]);
+    if (saveWk) {
+      const rec = await getRevisaoObj(uid, saveWk);
+      const d   = parseJ(rec.dados, {});
+      d.analise_ia = { text: analysis, gerado_em: new Date().toISOString(), scope };
+      await dbRun('UPDATE revisao SET dados = ? WHERE id = ?', [JSON.stringify(d), rec.id]);
+    }
+
+    res.json({ analysis });
+  } catch (err) {
+    console.error('AI analyze error:', err);
+    res.status(500).json({ error: 'Erro ao gerar análise: ' + (err.message || 'unknown') });
+  }
+});
+
 app.get('/api/revisoes/:wk', requireLogin, async (req, res) => {
   const r = await getRevisaoObj(req.session.userId, req.params.wk);
   const d = parseJ(r.dados, {});
-  d.planos_action = parseJ(r.planos_action, []);
+  d.planos_acao = parseJ(r.planos_action, []);
   res.json(d);
 });
 
