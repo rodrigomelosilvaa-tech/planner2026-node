@@ -340,7 +340,27 @@
       <div id="planos-popup-list" class="planos-popup-list"></div>
       <div class="planos-popup-foot">
         <button class="btn-p" style="font-size:10px;padding:5px 12px" onclick="goTo('revisao')">Ver Revisão</button>
-        <button class="btn-g" style="font-size:10px;padding:5px 12px" onclick="dismissPlanosPopup()">Dispensar por hoje</button>
+        <button class="btn-g" style="font-size:10px;padding:5px 12px" onclick="dismissPlanosPopup()">Dispensar esta semana</button>
+      </div>
+    </div>
+
+    <!-- Modal: Plano de Ação gerado pela IA -->
+    <div class="overlay" id="plano-ia-overlay" onclick="fecharModalPlanoIA()"></div>
+    <div class="plano-ia-modal" id="plano-ia-modal">
+      <div class="plano-ia-header">
+        <div>
+          <div style="font-family:var(--font-m);font-size:9px;color:var(--text3);letter-spacing:1.5px;text-transform:uppercase">Plano de Ação — IA</div>
+          <div style="font-size:16px;font-weight:600;margin-top:2px" id="plano-ia-semana"></div>
+        </div>
+        <button class="plano-ia-close" onclick="fecharModalPlanoIA()">✕</button>
+      </div>
+      <div style="font-size:11px;color:var(--text3);padding:0 16px 10px;font-family:var(--font-m)">
+        Revise, edite ou remova ações antes de criar. Elas ficarão visíveis como lembrete durante a semana.
+      </div>
+      <div id="plano-ia-lista" class="plano-ia-lista"></div>
+      <div class="plano-ia-foot">
+        <button class="btn-g" onclick="fecharModalPlanoIA()">Cancelar</button>
+        <button class="btn-p" id="plano-ia-confirmar" onclick="confirmarPlanoIA()">✅ Criar Planos</button>
       </div>
     </div>
 
@@ -627,6 +647,65 @@
               <span id="cfg-notif-status-txt">Verificando permissão...</span>
               <button class="btn-p" id="cfg-notif-perm-btn" onclick="cfgPedirPermissao()" style="display:none;font-size:10px;padding:5px 12px">Permitir notificações</button>
             </div>
+          </div>
+        </div>
+
+        <!-- Lembretes de Planos de Ação -->
+        <div class="cfg-card">
+          <div class="cfg-card-header">
+            <span class="cfg-card-icon">🎯</span>
+            <div>
+              <div class="cfg-card-ttl">Lembretes de Planos de Ação</div>
+              <div class="cfg-card-sub">Controle quando e como os planos da revisão semanal aparecem no Planner</div>
+            </div>
+            <label class="cfg-toggle" title="Ativar/desativar lembretes de planos">
+              <input type="checkbox" id="cfg-planos-ativo" onchange="cfgSavePlanosNotif()">
+              <span class="cfg-toggle-track"><span class="cfg-toggle-thumb"></span></span>
+            </label>
+          </div>
+          <div id="cfg-planos-body">
+            <div class="cfg-row">
+              <div class="cfg-lbl">
+                Frequência
+                <span class="cfg-lbl-sub">Com que frequência o lembrete aparece</span>
+              </div>
+              <div class="cfg-row-ctrl">
+                <select class="cfg-sel" id="cfg-planos-freq" onchange="cfgSavePlanosNotif()">
+                  <option value="always">Sempre ao abrir o Planner</option>
+                  <option value="daily">Uma vez por dia</option>
+                  <option value="weekly">Uma vez por semana</option>
+                </select>
+              </div>
+            </div>
+            <div class="cfg-row">
+              <div class="cfg-lbl">
+                Estilo do lembrete
+                <span class="cfg-lbl-sub">Como o lembrete é exibido</span>
+              </div>
+              <div class="cfg-row-ctrl">
+                <select class="cfg-sel" id="cfg-planos-estilo" onchange="cfgSavePlanosNotif()">
+                  <option value="popup">🪟 Popup (modal flutuante)</option>
+                  <option value="banner">📌 Banner fixo no topo</option>
+                  <option value="badge">🔴 Badge discreto (sem interrupção)</option>
+                </select>
+              </div>
+            </div>
+            <div class="cfg-row" style="align-items:flex-start">
+              <div class="cfg-lbl">
+                Dias da semana
+                <span class="cfg-lbl-sub">Em quais dias o lembrete aparece</span>
+              </div>
+              <div class="cfg-planos-dias" id="cfg-planos-dias">
+                <label class="cfg-dia-chk"><input type="checkbox" value="1" onchange="cfgSavePlanosNotif()"><span>Seg</span></label>
+                <label class="cfg-dia-chk"><input type="checkbox" value="2" onchange="cfgSavePlanosNotif()"><span>Ter</span></label>
+                <label class="cfg-dia-chk"><input type="checkbox" value="3" onchange="cfgSavePlanosNotif()"><span>Qua</span></label>
+                <label class="cfg-dia-chk"><input type="checkbox" value="4" onchange="cfgSavePlanosNotif()"><span>Qui</span></label>
+                <label class="cfg-dia-chk"><input type="checkbox" value="5" onchange="cfgSavePlanosNotif()"><span>Sex</span></label>
+                <label class="cfg-dia-chk"><input type="checkbox" value="6" onchange="cfgSavePlanosNotif()"><span>Sáb</span></label>
+                <label class="cfg-dia-chk"><input type="checkbox" value="0" onchange="cfgSavePlanosNotif()"><span>Dom</span></label>
+              </div>
+            </div>
+            <div id="cfg-planos-saved" style="font-family:var(--font-m);font-size:9px;color:var(--green);height:14px;padding:0 0 4px"></div>
           </div>
         </div>
 

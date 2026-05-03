@@ -119,6 +119,10 @@ async function createSchema() {
     "ALTER TABLE semana ADD COLUMN rotina_overrides TEXT DEFAULT '{}'",
     'ALTER TABLE backlog ADD COLUMN arquivado INTEGER DEFAULT 0',
     'ALTER TABLE rotina  ADD COLUMN arquivado INTEGER DEFAULT 0',
+    "ALTER TABLE configuracao ADD COLUMN planos_notif_ativo INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE configuracao ADD COLUMN planos_notif_freq  TEXT    NOT NULL DEFAULT 'daily'",
+    "ALTER TABLE configuracao ADD COLUMN planos_notif_estilo TEXT   NOT NULL DEFAULT 'popup'",
+    "ALTER TABLE configuracao ADD COLUMN planos_notif_dias  TEXT    NOT NULL DEFAULT '[0,1,2,3,4,5,6]'",
   ];
   for (const stmt of alterStmts) {
     try { await dbRun(stmt, []); } catch(_) { /* column already exists */ }
@@ -937,61 +941,102 @@ app.get('/api/revisoes/analise', requireLogin, async (req, res) => {
   res.json({ analise_ia: d.analise_ia || null });
 });
 
+// Helper: monta contexto de semanas para IA (apenas itens do planner do usuário)
+async function buildRevisaoContext(uid, scope, weekKeys) {
+  const DIAS = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'];
+
+  // Determinar semanas a analisar — filtrar week_keys especiais (_geral, etc.) em JS
+  let revisaoRows = [];
+  if (scope === 'general') {
+    const allRows = await dbAll(
+      "SELECT week_key, dados, planos_action FROM revisao WHERE user_id = ? ORDER BY week_key DESC LIMIT 20",
+      [uid]
+    );
+    revisaoRows = allRows.filter(r => !r.week_key.startsWith('_')).slice(0, 8);
+  } else if (weekKeys && weekKeys.length > 0) {
+    const ph = weekKeys.map(() => '?').join(',');
+    revisaoRows = await dbAll(
+      `SELECT week_key, dados, planos_action FROM revisao WHERE user_id = ? AND week_key IN (${ph}) ORDER BY week_key DESC`,
+      [uid, ...weekKeys]
+    );
+  }
+
+  // Rotinas ativas do usuário
+  const rotinas = await dbAll(
+    "SELECT id, titulo, dias, horario FROM rotina WHERE user_id = ? AND (arquivado IS NULL OR arquivado=0)",
+    [uid]
+  );
+
+  let texto = '';
+  for (const row of revisaoRows) {
+    const wk  = row.week_key;
+    const dad = parseJ(row.dados, {});
+    const planos = parseJ(row.planos_action, []);
+
+    // Itens planejados no planner desta semana (semana.items)
+    const semRec = await dbGet('SELECT items, rotina_done FROM semana WHERE user_id = ? AND week_key = ?', [uid, wk]);
+    const items  = semRec ? parseJ(semRec.items, {}) : {};
+    const rdone  = semRec ? parseJ(semRec.rotina_done, {}) : {};
+
+    // Rotinas com dias cadastrados (todas ativas para o usuário)
+    const rotinasAtivas = rotinas.filter(r => parseJ(r.dias, []).length > 0);
+
+    // Itens avulsos do planner
+    const plannerItems = [];
+    for (const cell of Object.values(items)) {
+      for (const it of (cell || [])) {
+        plannerItems.push(it);
+      }
+    }
+
+    if (!dad.fez && !dad.nao && !dad.imp && !dad.mel && !planos.length && !plannerItems.length && !rotinasAtivas.length) continue;
+
+    texto += `\n\n=== Semana ${wk} ===\n`;
+
+    if (rotinasAtivas.length) {
+      texto += `Rotinas programadas:\n`;
+      rotinasAtivas.forEach(r => {
+        const diasLbl = parseJ(r.dias, []).map(d => DIAS[d] || d).join(', ');
+        const total = parseJ(r.dias, []).length;
+        const done  = parseJ(r.dias, []).filter(d => rdone[r.id + '_' + d] === 'done').length;
+        texto += `  - ${r.titulo} (${diasLbl} às ${r.horario || '?'}) — ${done}/${total} concluídas\n`;
+      });
+    }
+
+    if (plannerItems.length) {
+      texto += `Itens planejados na semana:\n`;
+      plannerItems.slice(0, 20).forEach(it => {
+        texto += `  - ${it.titulo||it.texto||it.id} [${it.done||it.concluido?'✓ feito':'pendente'}]\n`;
+      });
+    }
+
+    if (dad.fez) texto += `Reflexão — O que executei: ${dad.fez}\n`;
+    if (dad.nao) texto += `Reflexão — O que não consegui: ${dad.nao}\n`;
+    if (dad.imp) texto += `Reflexão — Imprevistos: ${dad.imp}\n`;
+    if (dad.mel) texto += `Reflexão — Melhorias: ${dad.mel}\n`;
+    if (dad.kr)  texto += `Reflexão — OKRs: ${dad.kr}\n`;
+
+    if (planos.length) {
+      texto += `Planos de ação anteriores:\n`;
+      planos.forEach(p => {
+        texto += `  - ${p.titulo} [${p.concluido ? 'concluído' : 'pendente'}]\n`;
+      });
+    }
+  }
+
+  return texto;
+}
+
 // Análise de IA (deve vir ANTES de /:wk para não ser capturado como wk='analyze')
 app.post('/api/revisoes/analyze', requireLogin, async (req, res) => {
   const uid = req.session.userId;
   const { scope, weekKeys } = req.body;
 
   try {
-    let revisaoRows = [];
-    if (scope === 'general') {
-      revisaoRows = await dbAll(
-        "SELECT week_key, dados, planos_action FROM revisao WHERE user_id = ? ORDER BY week_key DESC LIMIT 12",
-        [uid]
-      );
-    } else if (weekKeys && weekKeys.length > 0) {
-      const placeholders = weekKeys.map(() => '?').join(',');
-      revisaoRows = await dbAll(
-        `SELECT week_key, dados, planos_action FROM revisao WHERE user_id = ? AND week_key IN (${placeholders}) ORDER BY week_key DESC`,
-        [uid, ...weekKeys]
-      );
-    }
+    const contexto = await buildRevisaoContext(uid, scope, weekKeys);
 
-    const rotinas = await dbAll("SELECT titulo, dias, horario FROM rotina WHERE user_id = ? AND (arquivado IS NULL OR arquivado=0)", [uid]);
-    const backlog = await dbAll("SELECT titulo, urgencia, prazo, concluido FROM backlog WHERE user_id = ? AND (arquivado IS NULL OR arquivado=0)", [uid]);
-    const pendentes = backlog.filter(b => !b.concluido).slice(0, 20);
-
-    const DIAS = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'];
-    const rotinasTexto = rotinas.map(r => {
-      const dias = parseJ(r.dias, []).map(d => DIAS[d] || d).join(', ');
-      return `- ${r.titulo} (${dias} às ${r.horario || '?'})`;
-    }).join('\n') || 'Nenhuma rotina cadastrada';
-
-    const backlogTexto = pendentes.map(b =>
-      `- ${b.titulo} [urg:${b.urgencia||'m'}${b.prazo?' prazo:'+b.prazo:''}]`
-    ).join('\n') || 'Nenhuma tarefa pendente';
-
-    let revisaoTexto = '';
-    for (const r of revisaoRows) {
-      const d = parseJ(r.dados, {});
-      const planos = parseJ(r.planos_action, []);
-      if (!d.fez && !d.nao && !d.imp && !d.mel && !planos.length) continue;
-      revisaoTexto += `\n\n=== Semana ${r.week_key} ===\n`;
-      if (d.fez) revisaoTexto += `O que executei: ${d.fez}\n`;
-      if (d.nao) revisaoTexto += `O que não consegui: ${d.nao}\n`;
-      if (d.imp) revisaoTexto += `Imprevistos: ${d.imp}\n`;
-      if (d.mel) revisaoTexto += `Melhorias planejadas: ${d.mel}\n`;
-      if (d.kr)  revisaoTexto += `OKRs: ${d.kr}\n`;
-      if (planos.length) {
-        revisaoTexto += `Planos de ação:\n`;
-        planos.forEach(p => {
-          revisaoTexto += `  - ${p.titulo} [${p.concluido?'concluído':'pendente'}${p.prazo?' prazo:'+p.prazo:''}]\n`;
-        });
-      }
-    }
-
-    if (!revisaoTexto.trim()) {
-      return res.json({ analysis: 'Não há dados de revisão suficientes para análise. Preencha ao menos uma revisão semanal primeiro.' });
+    if (!contexto.trim()) {
+      return res.json({ analysis: 'Não há dados suficientes para análise. Preencha ao menos uma reflexão semanal e tenha itens planejados no Planner.' });
     }
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -1000,23 +1045,17 @@ app.post('/api/revisoes/analyze', requireLogin, async (req, res) => {
       max_tokens: 2048,
       messages: [{
         role: 'user',
-        content: `Você é um especialista em neuropsicologia, psicologia positiva e produtividade pessoal. Analise os dados de revisão semanal abaixo e forneça uma análise profunda e um plano de ação prático.
+        content: `Você é um especialista em neuropsicologia, psicologia positiva e produtividade pessoal. Analise os dados reais do planner semanal do usuário e forneça uma análise profunda e um plano de ação prático.
 
-ROTINAS CADASTRADAS:
-${rotinasTexto}
-
-TAREFAS PENDENTES (backlog):
-${backlogTexto}
-
-HISTÓRICO DE REVISÕES:
-${revisaoTexto}
+DADOS DO PLANNER (apenas itens efetivamente planejados e executados):
+${contexto}
 
 Por favor, forneça:
-1. **Análise dos Padrões** — O que está funcionando? Onde há recorrência de bloqueios? Que padrões comportamentais você observa?
+1. **Análise dos Padrões** — O que está funcionando? Onde há recorrência de bloqueios? Que padrões comportamentais você observa nas rotinas e no que foi planejado vs executado?
 2. **Impacto Emocional e Cognitivo** — Como os imprevistos e não-conclusões estão afetando o sistema como um todo?
 3. **Recomendações Prioritárias** — 3-5 ajustes concretos na rotina, prioridade ou mentalidade para a próxima semana
-4. **Plano de Ação** — Liste 2-4 ações específicas e mensuráveis, com prazo sugerido (formato: Ação | Prazo | Por quê)
-5. **Palavra de Suporte** — Uma mensagem motivacional personalizada baseada no contexto
+4. **Aviso Explícito** — Deixe claro: se nada mudar na forma de agir, qual será o resultado provável?
+5. **Palavra de Suporte** — Uma mensagem motivacional personalizada baseada no contexto real
 
 Seja direto, empático e prático. Use linguagem acessível em português brasileiro.`
       }]
@@ -1024,7 +1063,6 @@ Seja direto, empático e prático. Use linguagem acessível em português brasil
 
     const analysis = message.content[0]?.text || 'Erro ao gerar análise.';
 
-    // Salvar análise no banco para não recalcular
     const saveWk = scope === 'general' ? '_geral' : (weekKeys && weekKeys[0]);
     if (saveWk) {
       const rec = await getRevisaoObj(uid, saveWk);
@@ -1037,6 +1075,75 @@ Seja direto, empático e prático. Use linguagem acessível em português brasil
   } catch (err) {
     console.error('AI analyze error:', err);
     res.status(500).json({ error: 'Erro ao gerar análise: ' + (err.message || 'unknown') });
+  }
+});
+
+// Gerar plano de ação estruturado para a próxima semana
+app.post('/api/revisoes/gerar-plano', requireLogin, async (req, res) => {
+  const uid = req.session.userId;
+  const { scope, weekKeys, analiseTexto } = req.body;
+
+  try {
+    // Calcular próxima segunda-feira
+    const hoje = new Date();
+    const dow = hoje.getDay(); // 0=dom
+    const diasAte = dow === 0 ? 1 : 8 - dow; // dias até próxima segunda
+    const proximaSegunda = new Date(hoje);
+    proximaSegunda.setDate(hoje.getDate() + diasAte);
+    const proximaSemana = proximaSegunda.toISOString().slice(0, 10);
+    const fimProximaSemana = new Date(proximaSegunda);
+    fimProximaSemana.setDate(fimProximaSemana.getDate() + 6);
+    const fimStr = fimProximaSemana.toISOString().slice(0, 10);
+
+    // Montar contexto — prioriza dados do planner, complementa com análise salva
+    let contexto = await buildRevisaoContext(uid, scope, weekKeys);
+    if (analiseTexto && analiseTexto.length > 50) {
+      contexto += '\n\nANÁLISE PRÉVIA DA IA:\n' + analiseTexto.slice(0, 1500);
+    }
+
+    if (!contexto.trim()) {
+      return res.status(400).json({ error: 'Sem dados suficientes. Preencha reflexões na Revisão Semanal primeiro.' });
+    }
+
+    console.log('[gerar-plano] uid=%s scope=%s contexto_len=%d', uid, scope, contexto.length);
+
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const message = await client.messages.create({
+      model: 'claude-opus-4-7',
+      max_tokens: 2048,
+      messages: [{
+        role: 'user',
+        content: `Com base nos dados reais do planner do usuário abaixo, gere de 3 a 5 ações concretas para a próxima semana (${proximaSemana} a ${fimStr}). Mantenha cada "descricao" com no máximo 80 caracteres.
+
+DADOS:
+${contexto}
+
+Responda APENAS com JSON válido (sem markdown, sem texto extra):
+[
+  {"titulo": "Ação clara e específica", "urgencia": "h", "prazo": "${fimStr}", "descricao": "Motivo breve"},
+  ...
+]
+
+Urgência: h=alta, m=média, l=baixa.`
+      }]
+    });
+
+    const raw = (message.content[0]?.text || '').trim();
+    console.log('[gerar-plano] raw response:', raw.slice(0, 200));
+    let acoes = [];
+    try {
+      const jsonMatch = raw.match(/\[[\s\S]*\]/);
+      acoes = JSON.parse(jsonMatch ? jsonMatch[0] : raw);
+      if (!Array.isArray(acoes)) acoes = [];
+    } catch(e) {
+      console.error('[gerar-plano] JSON parse error:', e.message, 'raw:', raw.slice(0,300));
+      acoes = [];
+    }
+
+    res.json({ acoes, proximaSemana });
+  } catch (err) {
+    console.error('gerar-plano error:', err);
+    res.status(500).json({ error: 'Erro ao gerar plano: ' + (err.message || 'desconhecido') });
   }
 });
 
@@ -1360,10 +1467,14 @@ app.put('/api/config', requireLogin, async (req, res) => {
   const d   = req.body;
   const fields = [], vals = [];
   const sf = (col, val) => { fields.push(`${col} = ?`); vals.push(val); };
-  if ('notif_ativas'   in d) sf('notif_ativas',   d.notif_ativas  ? 1 : 0);
-  if ('notif_minutos'  in d) sf('notif_minutos',  Number(d.notif_minutos) || 5);
-  if ('notif_som'      in d) sf('notif_som',      d.notif_som ? 1 : 0);
-  if ('notif_som_tipo' in d) sf('notif_som_tipo', d.notif_som_tipo || 'sino');
+  if ('notif_ativas'        in d) sf('notif_ativas',        d.notif_ativas  ? 1 : 0);
+  if ('notif_minutos'       in d) sf('notif_minutos',       Number(d.notif_minutos) || 5);
+  if ('notif_som'           in d) sf('notif_som',           d.notif_som ? 1 : 0);
+  if ('notif_som_tipo'      in d) sf('notif_som_tipo',      d.notif_som_tipo || 'sino');
+  if ('planos_notif_ativo'  in d) sf('planos_notif_ativo',  d.planos_notif_ativo  ? 1 : 0);
+  if ('planos_notif_freq'   in d) sf('planos_notif_freq',   d.planos_notif_freq   || 'daily');
+  if ('planos_notif_estilo' in d) sf('planos_notif_estilo', d.planos_notif_estilo || 'popup');
+  if ('planos_notif_dias'   in d) sf('planos_notif_dias',   JSON.stringify(d.planos_notif_dias || [0,1,2,3,4,5,6]));
   sf('atualizado', todayStr());
   // Upsert
   const existing = await dbGet('SELECT id FROM configuracao WHERE user_id = ?', [uid]);

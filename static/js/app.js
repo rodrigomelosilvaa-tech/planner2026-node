@@ -2691,7 +2691,8 @@ function renderAnaliseIA(saved){
   var scopeLbl=saved.scope==='general'?'Geral':'Semana específica';
   result.innerHTML='<div class="rev-ai-meta">'+scopeLbl+(dt?' · '+dt:'')
     +' <button class="rev-ai-regen" onclick="analisarIA(true)" title="Gerar nova análise">↺ Regerar</button></div>'
-    +'<div class="rev-ai-text">'+markdownToHtml(saved.text)+'</div>';
+    +'<div class="rev-ai-text">'+markdownToHtml(saved.text)+'</div>'
+    +'<button class="btn-p rev-ai-plano-btn" onclick="gerarPlanoIA()" style="width:100%;margin-top:10px;font-size:11px">📋 Adicionar como Plano de Ação</button>';
 }
 
 async function analisarIA(force){
@@ -2741,38 +2742,213 @@ function markdownToHtml(text){
     .replace(/\n/g,'<br>');
 }
 
+// ── GERAR PLANO DE AÇÃO COM IA ─────────────────
+async function gerarPlanoIA(){
+  var scope = S.aiScope || 'general';
+  var weekKeys = scope==='week' ? [S.revisaoWeekKey||S.weekKey] : null;
+  // Passar texto da análise como contexto extra
+  var analiseEl=document.querySelector('#rev-ai-result .rev-ai-text');
+  var analiseTexto=analiseEl?analiseEl.innerText:'';
+
+  var btn=document.querySelector('.rev-ai-plano-btn');
+  var resultEl=document.getElementById('rev-ai-result');
+  if(btn){btn.disabled=true;btn.textContent='⏳ Gerando plano...';}
+  try{
+    var res=await api('POST','/api/revisoes/gerar-plano',{scope:scope,weekKeys:weekKeys,analiseTexto:analiseTexto});
+    if(!res){
+      // api() retornou null = erro HTTP
+      if(resultEl) resultEl.innerHTML+='<div class="rev-ai-err">❌ Erro de conexão ao gerar plano. Tente novamente.</div>';
+      return;
+    }
+    if(res.error){
+      if(resultEl) resultEl.innerHTML+='<div class="rev-ai-err">❌ '+res.error+'</div>';
+      return;
+    }
+    if(!res.acoes||!res.acoes.length){
+      if(resultEl) resultEl.innerHTML+='<div class="rev-ai-err">⚠️ A IA não retornou ações. Tente regerar a análise primeiro.</div>';
+      return;
+    }
+    abrirModalPlanoIA(res.acoes, res.proximaSemana);
+  }catch(e){
+    if(resultEl) resultEl.innerHTML+='<div class="rev-ai-err">❌ Erro inesperado: '+e.message+'</div>';
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='📋 Adicionar como Plano de Ação';}
+  }
+}
+
+var _planoIASugestoes=[];
+var _planoIASemana='';
+
+function abrirModalPlanoIA(acoes, proximaSemana){
+  _planoIASugestoes=acoes.map(function(a,i){return Object.assign({},a,{_idx:i});});
+  _planoIASemana=proximaSemana||'';
+  var urg={h:'🔴 Alta',m:'🟡 Média',l:'🟢 Baixa'};
+  var d=new Date(proximaSemana+'T12:00');
+  var semLbl=proximaSemana?d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'}):'';
+
+  var modal=document.getElementById('plano-ia-modal');
+  var ov=document.getElementById('plano-ia-overlay');
+  if(!modal) return;
+  document.getElementById('plano-ia-semana').textContent='Semana de '+semLbl;
+  renderPlanoIALista();
+  modal.classList.add('open');
+  if(ov) ov.style.display='block';
+}
+
+function renderPlanoIALista(){
+  var wrap=document.getElementById('plano-ia-lista');
+  if(!wrap) return;
+  var urg={h:'🔴 Alta',m:'🟡 Média',l:'🟢 Baixa'};
+  wrap.innerHTML='';
+  _planoIASugestoes.forEach(function(a){
+    var el=document.createElement('div');
+    el.className='pia-item';
+    el.dataset.idx=a._idx;
+    el.innerHTML='<div class="pia-item-head">'
+      +'<select class="pia-urg field-sel" data-idx="'+a._idx+'" onchange="planoIAEditUrg('+a._idx+',this.value)">'
+      +'<option value="h"'+(a.urgencia==='h'?' selected':'')+'>🔴 Alta</option>'
+      +'<option value="m"'+(a.urgencia==='m'||!a.urgencia?' selected':'')+'>🟡 Média</option>'
+      +'<option value="l"'+(a.urgencia==='l'?' selected':'')+'>🟢 Baixa</option>'
+      +'</select>'
+      +'<button class="pia-del" onclick="planoIARemover('+a._idx+')" title="Remover esta ação">✕</button>'
+      +'</div>'
+      +'<input class="field-in pia-titulo" value="'+escHtml(a.titulo||'')+'" oninput="planoIAEditTitulo('+a._idx+',this.value)" placeholder="Ação">'
+      +(a.descricao?'<div class="pia-desc">'+escHtml(a.descricao)+'</div>':'')
+      +'<input class="field-in pia-prazo" type="date" value="'+(a.prazo||_planoIASemana)+'" onchange="planoIAEditPrazo('+a._idx+',this.value)">';
+    wrap.appendChild(el);
+  });
+  if(!_planoIASugestoes.length){
+    wrap.innerHTML='<div style="color:var(--text3);font-size:11px;text-align:center;padding:20px">Nenhuma ação. Clique em ✕ para remover ou cancele.</div>';
+  }
+}
+
+function escHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function planoIARemover(idx){ _planoIASugestoes=_planoIASugestoes.filter(function(a){return a._idx!==idx;}); renderPlanoIALista(); }
+function planoIAEditTitulo(idx,v){ var a=_planoIASugestoes.find(function(x){return x._idx===idx;}); if(a) a.titulo=v; }
+function planoIAEditUrg(idx,v){ var a=_planoIASugestoes.find(function(x){return x._idx===idx;}); if(a) a.urgencia=v; }
+function planoIAEditPrazo(idx,v){ var a=_planoIASugestoes.find(function(x){return x._idx===idx;}); if(a) a.prazo=v; }
+
+function fecharModalPlanoIA(){
+  var modal=document.getElementById('plano-ia-modal');
+  var ov=document.getElementById('plano-ia-overlay');
+  if(modal) modal.classList.remove('open');
+  if(ov) ov.style.display='none';
+}
+
+async function confirmarPlanoIA(){
+  if(!_planoIASugestoes.length){fecharModalPlanoIA();return;}
+  // Criar planos na semana SEGUINTE (usa _planoIASemana como week_key da próxima semana)
+  var targetWk=_planoIASemana||S.weekKey;
+  var btn=document.getElementById('plano-ia-confirmar');
+  if(btn){btn.disabled=true;btn.textContent='⏳ Criando...';}
+  var criados=0;
+  for(var i=0;i<_planoIASugestoes.length;i++){
+    var a=_planoIASugestoes[i];
+    if(!(a.titulo||'').trim()) continue;
+    await api('POST','/api/revisoes/'+targetWk+'/plano',{
+      titulo:a.titulo.trim(),
+      urgencia:a.urgencia||'m',
+      prazo:a.prazo||targetWk,
+      descricao:a.descricao||''
+    });
+    criados++;
+  }
+  if(btn){btn.disabled=false;btn.textContent='✅ Criar Planos';}
+  fecharModalPlanoIA();
+  toast('✅ '+criados+' plano'+(criados!==1?'s':'')+' criado'+(criados!==1?'s':'')+' para a próxima semana!','success');
+}
+
 // ── PLANOS POPUP ──────────────────────────────
 var _planosPopupDismissed = false;
 
 async function checkPlanosPopup(){
+  var cfg = S.config || {};
+  // Checar se lembrete está ativo
+  if(cfg.planos_notif_ativo === 0) return;
+
+  // Checar se hoje é um dia configurado
+  var diasCfg = [];
+  try { diasCfg = JSON.parse(cfg.planos_notif_dias || '[0,1,2,3,4,5,6]'); } catch(e){ diasCfg=[0,1,2,3,4,5,6]; }
+  var hoje = new Date().getDay(); // 0=dom
+  if(diasCfg.length && diasCfg.indexOf(hoje)===-1) return;
+
+  // Checar frequência
+  var freq = cfg.planos_notif_freq || 'daily';
+  var dismissed = localStorage.getItem('planos-popup-dismissed');
+  if(freq==='weekly' && dismissed===S.weekKey) return;
+  if(freq==='daily'  && dismissed===new Date().toDateString()) return;
+  // freq==='always' → nunca bloqueia
   if(_planosPopupDismissed) return;
-  var dismissed=localStorage.getItem('planos-popup-dismissed');
-  if(dismissed===new Date().toDateString()) return;
-  var ativos=await api('GET','/api/planos-ativos')||[];
+
+  var ativos = await api('GET','/api/planos-ativos')||[];
   if(!ativos.length) return;
-  var list=document.getElementById('planos-popup-list');
-  if(!list) return;
+
+  var estilo = cfg.planos_notif_estilo || 'popup';
   var uL={h:'🔴',m:'🟡',l:'🟢'};
-  list.innerHTML=ativos.slice(0,5).map(function(p){
+  var listHtml = ativos.slice(0,5).map(function(p){
     return '<div class="popup-plano-item">'
       +'<span class="popup-plano-urg">'+(uL[p.urgencia||'m'])+'</span>'
       +'<span class="popup-plano-titulo">'+p.titulo+'</span>'
       +(p.prazo?'<span class="popup-plano-prazo">'+formatDate(p.prazo)+'</span>':'')
       +'</div>';
   }).join('');
-  if(ativos.length>5) list.innerHTML+='<div style="color:var(--text3);font-size:10px;font-family:var(--font-m);padding:4px 0">...e mais '+(ativos.length-5)+' pendentes</div>';
-  var popup=document.getElementById('planos-popup');
-  if(popup) popup.style.display='flex';
+  if(ativos.length>5) listHtml+='<div style="color:var(--text3);font-size:10px;font-family:var(--font-m);padding:4px 0">...e mais '+(ativos.length-5)+' pendentes</div>';
+
+  if(estilo==='popup'){
+    var list=document.getElementById('planos-popup-list');
+    if(list) list.innerHTML=listHtml;
+    var popup=document.getElementById('planos-popup');
+    if(popup) popup.style.display='flex';
+    document.getElementById('planos-popup-banner') && (document.getElementById('planos-popup-banner').style.display='none');
+  } else if(estilo==='banner'){
+    _mostrarPlanosBanner(ativos.length, listHtml);
+  } else if(estilo==='badge'){
+    _mostrarPlanosBadge(ativos.length);
+  }
+}
+
+function _mostrarPlanosBanner(total, listHtml){
+  var banner=document.getElementById('planos-banner');
+  if(!banner){
+    banner=document.createElement('div');
+    banner.id='planos-banner';
+    banner.className='planos-banner';
+    document.querySelector('.main-wrap').prepend(banner);
+  }
+  banner.innerHTML='<span class="pb-icon">🎯</span>'
+    +'<span class="pb-txt"><strong>'+total+' plano'+(total!==1?'s':'')+' pendente'+(total!==1?'s':'')+'</strong> desta semana</span>'
+    +'<button class="pb-ver" onclick="goTo(\'revisao\')">Ver planos</button>'
+    +'<button class="pb-dis" onclick="dismissPlanosPopup()">✕</button>';
+  banner.style.display='flex';
+}
+
+function _mostrarPlanosBadge(total){
+  var badge=document.getElementById('planos-badge');
+  if(!badge){
+    badge=document.createElement('div');
+    badge.id='planos-badge';
+    badge.className='planos-badge';
+    badge.title='Planos de ação pendentes — clique para ver';
+    badge.onclick=function(){ goTo('revisao'); };
+    document.body.appendChild(badge);
+  }
+  badge.textContent='🎯 '+total;
+  badge.style.display='flex';
 }
 
 function closePlanosPopup(){
   var popup=document.getElementById('planos-popup');
   if(popup) popup.style.display='none';
+  var banner=document.getElementById('planos-banner');
+  if(banner) banner.style.display='none';
 }
 
 function dismissPlanosPopup(){
   _planosPopupDismissed=true;
-  localStorage.setItem('planos-popup-dismissed',new Date().toDateString());
+  var freq=(S.config&&S.config.planos_notif_freq)||'daily';
+  if(freq==='weekly')      localStorage.setItem('planos-popup-dismissed', S.weekKey);
+  else if(freq==='always') localStorage.setItem('planos-popup-dismissed', new Date().toDateString()); // always → dismiss só por hoje
+  else                     localStorage.setItem('planos-popup-dismissed', new Date().toDateString()); // daily
   closePlanosPopup();
 }
 

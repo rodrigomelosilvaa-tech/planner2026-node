@@ -719,6 +719,48 @@ html[data-theme="light"] .blk-removed{border-left-color:rgba(0,0,0,.15);backgrou
 .plano-id { font-family: var(--font-m); font-size: 8px; color: var(--text3); }
 .plano-prazo { font-family: var(--font-m); font-size: 9px; color: var(--text2); }
 
+/* ── PLANOS BANNER / BADGE ──────────────────── */
+.planos-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 16px;
+  background: linear-gradient(90deg,rgba(var(--accent-rgb),.12),rgba(var(--accent-rgb),.06));
+  border-bottom: 1px solid rgba(var(--accent-rgb),.25);
+  font-size: 12px; color: var(--text1); flex-shrink: 0; z-index: 100;
+}
+.pb-icon { font-size: 16px; flex-shrink: 0; }
+.pb-txt  { flex: 1; }
+.pb-ver  { border: 1px solid var(--accent); background: none; color: var(--accent);
+           font-size: 10px; padding: 3px 10px; border-radius: 5px; cursor: pointer;
+           font-family: var(--font-m); white-space: nowrap; }
+.pb-ver:hover { background: var(--accent); color: #000; }
+.pb-dis  { border: none; background: none; color: var(--text3);
+           font-size: 13px; cursor: pointer; padding: 2px 6px; border-radius: 4px; flex-shrink:0; }
+.pb-dis:hover { background: var(--bg3); color: var(--text1); }
+.planos-badge {
+  position: fixed; bottom: 24px; left: 24px;
+  background: var(--accent); color: #000;
+  font-weight: 600; font-size: 11px;
+  padding: 6px 12px; border-radius: 20px;
+  cursor: pointer; z-index: 1500;
+  box-shadow: 0 4px 16px rgba(0,0,0,.3);
+  transition: transform .15s;
+}
+.planos-badge:hover { transform: scale(1.05); }
+
+/* Config — dias da semana checkboxes */
+.cfg-planos-dias {
+  display: flex; gap: 6px; flex-wrap: wrap;
+}
+.cfg-dia-chk {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  cursor: pointer; user-select: none;
+}
+.cfg-dia-chk input { width: 14px; height: 14px; cursor: pointer; }
+.cfg-dia-chk span {
+  font-family: var(--font-m); font-size: 8px; color: var(--text3);
+  text-transform: uppercase; letter-spacing: .5px;
+}
+
 /* ── REVISÃO 2-COLUMN LAYOUT ───────────────── */
 #page-revisao { overflow: hidden; }
 .rev-layout {
@@ -868,6 +910,78 @@ html[data-theme="light"] .blk-removed{border-left-color:rgba(0,0,0,.15);backgrou
   font-size: 9px; cursor: pointer; padding: 0; font-family: var(--font-m);
 }
 .rev-ai-regen:hover { text-decoration: underline; }
+.rev-ai-plano-btn { margin-top: 10px; }
+.rev-ai-err {
+  font-size: 11px; color: var(--red);
+  background: rgba(231,76,60,.08); border: 1px solid rgba(231,76,60,.2);
+  border-radius: 6px; padding: 8px 10px; margin-top: 8px;
+  font-family: var(--font-m);
+}
+
+/* ── MODAL PLANO IA ──────────────────────────── */
+.plano-ia-modal {
+  display: none;
+  position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%, -50%) scale(.96);
+  width: min(560px, 96vw);
+  max-height: 85vh;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(0,0,0,.5);
+  z-index: 3001;
+  flex-direction: column;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity .2s, transform .2s;
+}
+.plano-ia-modal.open {
+  display: flex; opacity: 1; transform: translate(-50%,-50%) scale(1);
+}
+#plano-ia-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,.55); z-index: 3000;
+}
+/* overlay gerenciado via JS (fecharModalPlanoIA / abrirModalPlanoIA) */
+.plano-ia-header {
+  display: flex; align-items: flex-start;
+  justify-content: space-between;
+  padding: 16px 16px 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.plano-ia-close {
+  border: none; background: none; color: var(--text3);
+  font-size: 16px; cursor: pointer; padding: 2px 6px;
+  border-radius: 4px; transition: background .15s;
+}
+.plano-ia-close:hover { background: var(--bg3); color: var(--text1); }
+.plano-ia-lista {
+  flex: 1; overflow-y: auto; padding: 12px 16px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.plano-ia-foot {
+  display: flex; gap: 8px; padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+.pia-item {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.pia-item-head { display: flex; align-items: center; gap: 8px; }
+.pia-urg { flex: 1; max-width: 120px; }
+.pia-del {
+  border: none; background: none; color: var(--text3);
+  cursor: pointer; font-size: 12px; padding: 2px 6px;
+  border-radius: 4px; transition: background .15s; margin-left: auto;
+}
+.pia-del:hover { background: rgba(231,76,60,.15); color: var(--red); }
+.pia-titulo { font-size: 12px; }
+.pia-desc { font-size: 10px; color: var(--text3); font-family: var(--font-m); line-height: 1.5; }
+.pia-prazo { font-size: 11px; }
 
 /* Planos Popup */
 .planos-popup {

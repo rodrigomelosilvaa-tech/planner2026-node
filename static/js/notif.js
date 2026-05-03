@@ -221,6 +221,64 @@ function renderConfiguracoes() {
   if (body) body.classList.toggle('cfg-notif-disabled', !cfg.notif_ativas);
 
   cfgAtualizarStatus();
+
+  // ── Planos de ação ──────────────────────────
+  var planosAtivo = el('cfg-planos-ativo');
+  if (planosAtivo) planosAtivo.checked = cfg.planos_notif_ativo == null ? true : !!cfg.planos_notif_ativo;
+
+  var planosFreq = el('cfg-planos-freq');
+  if (planosFreq) planosFreq.value = cfg.planos_notif_freq || 'daily';
+
+  var planosEstilo = el('cfg-planos-estilo');
+  if (planosEstilo) planosEstilo.value = cfg.planos_notif_estilo || 'popup';
+
+  // Checkboxes de dias
+  var diasSalvos = [];
+  try { diasSalvos = JSON.parse(cfg.planos_notif_dias || '[0,1,2,3,4,5,6]'); } catch(e) { diasSalvos = [0,1,2,3,4,5,6]; }
+  var diasWrap = el('cfg-planos-dias');
+  if (diasWrap) {
+    diasWrap.querySelectorAll('input[type=checkbox]').forEach(function(ck) {
+      ck.checked = diasSalvos.indexOf(Number(ck.value)) !== -1;
+    });
+  }
+
+  var planosBody = el('cfg-planos-body');
+  if (planosBody) planosBody.classList.toggle('cfg-notif-disabled', !cfg.planos_notif_ativo && cfg.planos_notif_ativo != null);
+}
+
+async function cfgSavePlanosNotif() {
+  var el = function(id) { return document.getElementById(id); };
+  var ativo  = el('cfg-planos-ativo');
+  var freq   = el('cfg-planos-freq');
+  var estilo = el('cfg-planos-estilo');
+  var diasWrap = el('cfg-planos-dias');
+
+  var dias = [];
+  if (diasWrap) diasWrap.querySelectorAll('input[type=checkbox]').forEach(function(ck) {
+    if (ck.checked) dias.push(Number(ck.value));
+  });
+  if (!dias.length) dias = [0,1,2,3,4,5,6]; // fallback: todos os dias
+
+  var data = {
+    planos_notif_ativo:  ativo  ? (ativo.checked  ? 1 : 0) : 1,
+    planos_notif_freq:   freq   ? freq.value   : 'daily',
+    planos_notif_estilo: estilo ? estilo.value : 'popup',
+    planos_notif_dias:   dias
+  };
+
+  if (!S.config) S.config = {};
+  Object.assign(S.config, data);
+
+  // Atualizar estado visual do card
+  var body = el('cfg-planos-body');
+  if (body) body.classList.toggle('cfg-notif-disabled', !data.planos_notif_ativo);
+
+  await api('PUT', '/api/config', data);
+  var msg = el('cfg-planos-saved');
+  if (msg) { msg.textContent = '✓ Salvo'; setTimeout(function(){ msg.textContent=''; }, 2000); }
+
+  // Resetar dismissal para que nova config entre em vigor imediatamente
+  localStorage.removeItem('planos-popup-dismissed');
 }
 
 function cfgAtualizarStatus() {
